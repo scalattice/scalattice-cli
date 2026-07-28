@@ -1,0 +1,44 @@
+{
+  "name": "scalattice-cli",
+  "version": "0.1.1",
+  "description": "Scalattice developer CLI - login, API keys, OpenAI-compatible env exports, credits, optional MCP server.",
+  "type": "module",
+  "bin": {
+    "scalattice": "./bin/scalattice.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "start": "node ./bin/scalattice.js",
+    "prepublishOnly": "node ./bin/scalattice.js --help >/dev/null"
+  },
+  "license": "MIT",
+  "author": "Scalattice",
+  "homepage": "https://github.com/scalattice/scalattice-cli#readme",
+  "bugs": {
+    "url": "https://github.com/scalattice/scalattice-cli/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/scalattice/scalattice-cli.git"
+  },
+  "keywords": [
+    "scalattice",
+    "openai",
+    "inference",
+    "cli",
+    "mcp",
+    "llm",
+    "api-key"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}
