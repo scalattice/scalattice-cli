@@ -1,11 +1,11 @@
 name: Publish npm
 
-# Pushes to development bump package.json (patch) and publish to npm.
-# production is the stable default branch; merge from development when ready.
+# Merges/pushes to production bump package.json (patch) and publish to npm.
+# Work on development; merge into production to release.
 on:
   push:
     branches:
-      - development
+      - production
   workflow_dispatch:
     inputs:
       confirm:
@@ -65,7 +65,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Commit version bump
-        if: github.event_name == 'push' || github.ref_name == 'development'
+        if: github.ref_name == 'production'
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
@@ -76,4 +76,4 @@ jobs:
             exit 0
           fi
           git commit -m "chore: release ${NEXT} [skip ci]"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
+          git push origin "HEAD:production"
