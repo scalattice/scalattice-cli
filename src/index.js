@@ -20,6 +20,10 @@ import { configPath } from './config.js';
 
 const HELP = `scalattice - CLI for Scalattice Cloud (developers + providers)
 
+Keys:
+  slt_mgmt_…  account management (credits, keys CRUD, fleet) — SCALATTICE_MGMT_KEY
+  slt_…       inference only (OpenAI SDK) — SCALATTICE_API_KEY / OPENAI_API_KEY
+
 Usage:
   scalattice setup [--email you@example.com] [--login] [--new-key]
   scalattice login [--email you@example.com]
@@ -31,7 +35,7 @@ Usage:
   scalattice whoami
   scalattice mcp
 
-Provider fleet (management key slt_mgmt_…):
+Provider fleet (uses account management key):
   scalattice provider setup [--email …] [--new-key] [--name NAME] [--paste KEY]
   scalattice provider keys list|create|roll|revoke
   scalattice provider machines
@@ -40,15 +44,11 @@ Provider fleet (management key slt_mgmt_…):
   scalattice provider resume
   scalattice provider schedule --machine ID --mode always|paused|windows [--windows JSON]
 
-Developer quick start:
-  1. scalattice setup
-  2. eval "$(scalattice init)"
-  3. Use any OpenAI SDK with that base URL + key
-
-Provider fleet quick start:
-  1. scalattice provider setup
-  2. scalattice provider machines
-  3. scalattice mcp   # fleet tools when a mgmt key is stored
+Quick start:
+  1. scalattice setup          # mints mgmt key + inference key
+  2. eval "$(scalattice init)" # OpenAI env for SDKs
+  3. scalattice credits
+  4. scalattice provider machines   # if you host GPUs
 
 Config file: ${configPath()}
 Env overrides: SCALATTICE_CLOUD_URL, SCALATTICE_API_URL, SCALATTICE_API_KEY,

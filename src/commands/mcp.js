@@ -2,7 +2,8 @@
  * Minimal MCP server over stdio (JSON-RPC 2.0).
  * Lets Claude Desktop / Cursor call Scalattice tools without a browser.
  *
- * Developer tools use the inference API key; fleet tools use the management key.
+ * Inference catalog tools use the developer API key (`slt_`).
+ * Credits + fleet tools use the account management key (`slt_mgmt_`).
  */
 import { apiFetch, mgmtFetch } from '../api.js';
 import { loadConfig } from '../config.js';
@@ -26,28 +27,18 @@ function listTools(cfg) {
     {
       name: 'scalattice_env',
       description:
-        'Return configured Scalattice endpoints and whether developer API / fleet management keys are stored (values redacted).',
+        'Return configured Scalattice endpoints and whether inference / account management keys are stored (values redacted).',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     },
   ];
-  if (cfg.apiKey) {
+  if (cfg.mgmtKey) {
     tools.push(
       {
         name: 'scalattice_credits',
         description:
-          'Return Scalattice prepaid wallet balance, lifetime spend, and active model-specific credit grants for the configured API key.',
+          'Return Scalattice prepaid wallet balance, lifetime spend, and active model credit grants (account management key).',
         inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       },
-      {
-        name: 'scalattice_models',
-        description:
-          'List Scalattice catalog models with live per-token pricing (OpenAI-compatible /v1/models).',
-        inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-      }
-    );
-  }
-  if (cfg.mgmtKey) {
-    tools.push(
       {
         name: 'scalattice_fleet_machines',
         description: 'List fleet machines (status, schedule, earnings).',
@@ -75,6 +66,14 @@ function listTools(cfg) {
       }
     );
   }
+  if (cfg.apiKey) {
+    tools.push({
+      name: 'scalattice_models',
+      description:
+        'List Scalattice catalog models with live per-token pricing (OpenAI-compatible /v1/models).',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    });
+  }
   return tools;
 }
 
@@ -89,30 +88,30 @@ async function callTool(name, args = {}) {
       mgmt_key_configured: Boolean(cfg.mgmtKey),
       mgmt_key_suffix: cfg.mgmtKey ? cfg.mgmtKey.slice(-4) : null,
       hint: [
+        cfg.mgmtKey
+          ? 'Account management key configured (credits + fleet tools).'
+          : 'Run `scalattice setup` for an account management key.',
         cfg.apiKey
           ? `export OPENAI_BASE_URL=${cfg.apiUrl}\nexport OPENAI_API_KEY=<stored locally>`
-          : 'Run `scalattice setup` for developer inference keys.',
-        cfg.mgmtKey
-          ? 'Fleet tools available (scalattice_fleet_*).'
-          : 'Run `scalattice provider setup` for fleet management.',
+          : 'Run `scalattice setup` for an inference API key.',
       ].join(' '),
     };
   }
   if (name === 'scalattice_credits') {
-    return apiFetch(cfg, '/credits');
+    return mgmtFetch(cfg, '/api/v1/developers/billing');
   }
   if (name === 'scalattice_models') {
     return apiFetch(cfg, '/models');
   }
   if (name === 'scalattice_fleet_machines') {
-    return mgmtFetch(cfg, '/machines');
+    return mgmtFetch(cfg, '/api/v1/providers/machines');
   }
   if (name === 'scalattice_fleet_earnings') {
-    return mgmtFetch(cfg, '/earnings');
+    return mgmtFetch(cfg, '/api/v1/providers/earnings');
   }
   if (name === 'scalattice_fleet_set_availability') {
     const accepting = args.accepting === true || args.accepting === 'true';
-    return mgmtFetch(cfg, '/machines/schedule', {
+    return mgmtFetch(cfg, '/api/v1/providers/machines/schedule', {
       method: 'POST',
       body: { accepting },
     });

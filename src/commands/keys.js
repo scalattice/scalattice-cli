@@ -1,18 +1,14 @@
-import { cloudFetch } from '../api.js';
+import { mgmtFetch } from '../api.js';
 import { loadConfig, saveConfig } from '../config.js';
 import { print, prompt } from '../io.js';
-
-function requireSession(cfg) {
-  if (!cfg.sessionToken) throw new Error('Not signed in. Run: scalattice login');
-  return cfg;
-}
+import { ensureMgmtKey, requireMgmt } from './mgmt.js';
 
 export async function cmdKeysList() {
-  const cfg = requireSession(loadConfig());
-  const data = await cloudFetch(cfg, '/api/v1/developers/keys', { token: cfg.sessionToken });
+  const cfg = requireMgmt(loadConfig());
+  const data = await mgmtFetch(cfg, '/api/v1/developers/keys');
   const keys = data.keys || data || [];
   if (!Array.isArray(keys) || !keys.length) {
-    print('No API keys yet.');
+    print('No inference API keys yet.');
     return;
   }
   for (const k of keys) {
@@ -22,13 +18,16 @@ export async function cmdKeysList() {
 }
 
 export async function cmdKeysCreate(args) {
-  const cfg = requireSession(loadConfig());
+  let cfg = loadConfig();
+  if (!cfg.mgmtKey) {
+    cfg = await ensureMgmtKey({ ...args, yes: true });
+  }
+  requireMgmt(cfg);
   const name =
     args.name ||
     (args.yes ? 'CLI key' : await prompt('Key name', { defaultValue: 'CLI key' }));
-  const data = await cloudFetch(cfg, '/api/v1/developers/keys', {
+  const data = await mgmtFetch(cfg, '/api/v1/developers/keys', {
     method: 'POST',
-    token: cfg.sessionToken,
     body: { name },
   });
   const secret = data.secret;
@@ -38,7 +37,7 @@ export async function cmdKeysCreate(args) {
     apiKeyId: String(data.key?.id || ''),
     apiKeyName: data.key?.name || name,
   });
-  print('API key created and saved locally (shown once):');
+  print('Inference API key created and saved locally (shown once):');
   print(secret);
   print('');
   print('Add to your shell:');
