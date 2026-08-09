@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/scalattice/scalattice-cli/main/media/earth.png" alt="Scalattice developer CLI" width="100%" />
+  <img src="https://raw.githubusercontent.com/scalattice/scalattice-cli/production/media/earth.png" alt="Scalattice developer CLI" width="100%" />
 </p>
 
 # Scalattice CLI
