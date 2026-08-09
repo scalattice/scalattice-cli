@@ -31,14 +31,17 @@ export async function cloudFetch(cfg, path, { method = 'GET', body, token, cli =
   return data;
 }
 
-/** Provider fleet API via management key (`slt_mgmt_…`) against cloud `/api/v1/providers`. */
+/**
+ * Cloud management API via account management key (`slt_mgmt_…`).
+ * `path` is absolute under cloud origin, e.g. `/api/v1/developers/keys`.
+ */
 export async function mgmtFetch(cfg, path, { method = 'GET', body, mgmtKey } = {}) {
   const key = mgmtKey || cfg.mgmtKey;
   if (!key) {
-    throw new Error('No Fleet API key. Run: scalattice provider setup');
+    throw new Error('No account management key. Run: scalattice setup');
   }
   const suffix = path.startsWith('/') ? path : `/${path}`;
-  const url = `${cfg.cloudUrl}/api/v1/providers${suffix}`;
+  const url = `${cfg.cloudUrl}${suffix}`;
   const res = await fetch(url, {
     method,
     headers: {
@@ -67,6 +70,7 @@ export async function mgmtFetch(cfg, path, { method = 'GET', body, mgmtKey } = {
   return data;
 }
 
+/** Inference API via developer key (`slt_…`) against api.* /v1. */
 export async function apiFetch(cfg, path, { method = 'GET', body, apiKey } = {}) {
   const base = cfg.apiUrl.replace(/\/+$/, '');
   const url = `${base}${path.startsWith('/') ? path : `/${path}`}`;
