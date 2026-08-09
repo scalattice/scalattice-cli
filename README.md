@@ -95,17 +95,6 @@ cd scalattice-cli
 node bin/scalattice.js --help
 ```
 
-## Release (npm)
-
-Publishing is not automatic on every commit. Bump `version` in `package.json`, push, then tag:
-
-```bash
-git tag v0.2.0
-git push origin v0.2.0
-```
-
-That runs [`.github/workflows/publish.yml`](.github/workflows/publish.yml), which publishes to npm when the tag matches `package.json` (needs repo secret `NPM_TOKEN`).
-
 ## License
 
 MIT
