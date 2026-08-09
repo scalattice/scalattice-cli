@@ -41,8 +41,11 @@ export async function cmdLogout() {
     apiKey: '',
     apiKeyId: '',
     apiKeyName: '',
+    mgmtKey: '',
+    mgmtKeyId: '',
+    mgmtKeyName: '',
   });
-  print('Signed out. Session and stored API key cleared.');
+  print('Signed out. Session and stored keys cleared.');
 }
 
 export async function ensureDeveloperAudience(cfg) {
@@ -61,6 +64,36 @@ export async function ensureDeveloperAudience(cfg) {
       body: { accountAudience: 'both' },
     });
     print('Account upgraded to developer + provider (both).');
+  }
+  return me;
+}
+
+export async function ensureProviderAudience(cfg) {
+  const me = await cloudFetch(cfg, '/api/v1/account/me', { token: cfg.sessionToken });
+  if (!me.accountAudience) {
+    await cloudFetch(cfg, '/api/v1/account/me', {
+      method: 'PATCH',
+      token: cfg.sessionToken,
+      body: { accountAudience: 'provider', disclaimerAcknowledged: true },
+    });
+    print('Account set to provider.');
+  } else if (me.accountAudience === 'developer') {
+    await cloudFetch(cfg, '/api/v1/account/me', {
+      method: 'PATCH',
+      token: cfg.sessionToken,
+      body: { accountAudience: 'both' },
+    });
+    print('Account upgraded to developer + provider (both).');
+  }
+  // Ensure provider profile exists for mgmt-key CRUD.
+  try {
+    await cloudFetch(cfg, '/api/v1/providers/register', {
+      method: 'POST',
+      token: cfg.sessionToken,
+      body: {},
+    });
+  } catch {
+    /* already registered */
   }
   return me;
 }

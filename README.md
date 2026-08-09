@@ -7,9 +7,9 @@
 [![npm](https://img.shields.io/npm/v/scalattice-cli.svg)](https://www.npmjs.com/package/scalattice-cli)
 [![license](https://img.shields.io/npm/l/scalattice-cli.svg)](./LICENSE)
 
-Sign in, create a developer API key, print OpenAI-compatible env vars, and check credits - from the terminal. Optional MCP mode for AI coding agents.
+Sign in, create a developer API key, print OpenAI-compatible env vars, check credits, and manage a provider fleet (`slt_mgmt_…`) - from the terminal. Optional MCP mode for AI coding agents.
 
-**Product:** [scalattice.com/cli](https://scalattice.com/cli/) · **npm:** [scalattice-cli](https://www.npmjs.com/package/scalattice-cli) · **Cloud docs:** [developers#cli](https://scalattice.cloud/docs/developers#cli) · **Installer:** [scalattice.cloud/install/cli](https://scalattice.cloud/install/cli)
+**Product:** [scalattice.com/cli](https://scalattice.com/cli/) · **npm:** [scalattice-cli](https://www.npmjs.com/package/scalattice-cli) · **Cloud docs:** [developers#cli](https://scalattice.cloud/docs/developers#cli) · [providers#fleet-api](https://scalattice.cloud/docs/providers#fleet-api) · **Installer:** [scalattice.cloud/install/cli](https://scalattice.cloud/install/cli)
 
 ## Install
 
@@ -43,19 +43,34 @@ print(client.models.list())
 | --- | --- |
 | `scalattice setup` | Magic-code login → developer profile → create API key → print exports |
 | `scalattice login` / `logout` | Session only |
-| `scalattice keys list` / `keys create` | Manage API keys |
+| `scalattice keys list` / `keys create` | Manage developer API keys |
 | `scalattice init` | Print `export OPENAI_BASE_URL=...` and `OPENAI_API_KEY=...` |
 | `scalattice credits` | `GET /v1/credits` (wallet + model grants) |
 | `scalattice whoami` | Show config paths / what’s stored |
+| `scalattice provider setup` | Login → provider profile → create/save Fleet API key (`slt_mgmt_…`) |
+| `scalattice provider machines` / `earnings` | Fleet status and earnings |
+| `scalattice provider pause` / `resume` | Pause or resume all machines |
+| `scalattice provider schedule` | Patch one machine’s schedule |
+| `scalattice provider keys …` | List / create / roll / revoke Fleet API keys |
 | `scalattice mcp` | MCP stdio server for Cursor / Claude Desktop |
 
 Config: `~/.config/scalattice/config.json` (mode `0600`).
 
-Env overrides: `SCALATTICE_CLOUD_URL`, `SCALATTICE_API_URL`, `SCALATTICE_API_KEY`, `SCALATTICE_SESSION_TOKEN`.
+Env overrides: `SCALATTICE_CLOUD_URL`, `SCALATTICE_API_URL`, `SCALATTICE_API_KEY`, `SCALATTICE_MGMT_KEY`, `SCALATTICE_SESSION_TOKEN`.
+
+## Provider fleet
+
+```bash
+scalattice provider setup
+scalattice provider machines
+scalattice provider pause   # or resume
+```
+
+Create/roll keys on the Providers dashboard or via `scalattice provider keys`. See [Fleet API docs](https://scalattice.cloud/docs/providers#fleet-api).
 
 ## MCP (optional)
 
-MCP is **not** a second install. After `scalattice setup`:
+MCP is **not** a second install. After `scalattice setup` and/or `scalattice provider setup`:
 
 ```json
 {
@@ -68,7 +83,9 @@ MCP is **not** a second install. After `scalattice setup`:
 }
 ```
 
-Tools: `scalattice_credits`, `scalattice_models`, `scalattice_env`.
+Developer tools (when an API key is stored): `scalattice_credits`, `scalattice_models`, `scalattice_env`.
+
+Fleet tools (when a management key is stored): `scalattice_fleet_machines`, `scalattice_fleet_earnings`, `scalattice_fleet_set_availability`.
 
 ## Develop
 
@@ -77,6 +94,17 @@ git clone https://github.com/scalattice/scalattice-cli.git
 cd scalattice-cli
 node bin/scalattice.js --help
 ```
+
+## Release (npm)
+
+Publishing is not automatic on every commit. Bump `version` in `package.json`, push, then tag:
+
+```bash
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+That runs [`.github/workflows/publish.yml`](.github/workflows/publish.yml), which publishes to npm when the tag matches `package.json` (needs repo secret `NPM_TOKEN`).
 
 ## License
 

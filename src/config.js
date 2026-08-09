@@ -36,6 +36,9 @@ export function loadConfig() {
     apiKey: process.env.SCALATTICE_API_KEY || process.env.OPENAI_API_KEY || stored.apiKey || '',
     apiKeyId: stored.apiKeyId || '',
     apiKeyName: stored.apiKeyName || '',
+    mgmtKey: process.env.SCALATTICE_MGMT_KEY || stored.mgmtKey || '',
+    mgmtKeyId: stored.mgmtKeyId || '',
+    mgmtKeyName: stored.mgmtKeyName || '',
   };
 }
 
@@ -52,6 +55,9 @@ export function saveConfig(patch) {
     apiKey: next.apiKey || undefined,
     apiKeyId: next.apiKeyId || undefined,
     apiKeyName: next.apiKeyName || undefined,
+    mgmtKey: next.mgmtKey || undefined,
+    mgmtKeyId: next.mgmtKeyId || undefined,
+    mgmtKeyName: next.mgmtKeyName || undefined,
   };
   const file = configPath();
   fs.writeFileSync(file, `${JSON.stringify(fileBody, null, 2)}\n`, { mode: 0o600 });
@@ -69,5 +75,8 @@ export function clearSecrets() {
     apiKey: '',
     apiKeyId: '',
     apiKeyName: '',
+    mgmtKey: '',
+    mgmtKeyId: '',
+    mgmtKeyName: '',
   });
 }
