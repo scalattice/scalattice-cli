@@ -13,6 +13,7 @@ import {
   cmdProviderPause,
   cmdProviderResume,
   cmdProviderSchedule,
+  cmdProviderReconnect,
 } from './commands/provider.js';
 import { runMcpServer } from './commands/mcp.js';
 import { print } from './io.js';
@@ -43,6 +44,7 @@ Provider fleet (uses account management key):
   scalattice provider pause
   scalattice provider resume
   scalattice provider schedule --machine ID --mode always|paused|windows [--windows JSON]
+  scalattice provider reconnect --machine ID
 
 Quick start:
   1. scalattice setup          # mints mgmt key + inference key
@@ -106,9 +108,12 @@ async function runProvider(sub, rest, flags) {
     case 'schedule':
       await cmdProviderSchedule(flags);
       break;
+    case 'reconnect':
+      await cmdProviderReconnect(flags);
+      break;
     default:
       throw new Error(
-        `Usage: scalattice provider setup|keys|machines|earnings|pause|resume|schedule\n\n${HELP}`
+        `Usage: scalattice provider setup|keys|machines|earnings|pause|resume|schedule|reconnect\n\n${HELP}`
       );
   }
 }

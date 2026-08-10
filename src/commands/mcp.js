@@ -63,6 +63,22 @@ function listTools(cfg) {
           required: ['accepting'],
           additionalProperties: false,
         },
+      },
+      {
+        name: 'scalattice_fleet_reconnect',
+        description:
+          'Kick a machine agent WebSocket so it auto-reconnects with the same token.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            machineId: {
+              type: 'string',
+              description: 'Provider machine / agent key id',
+            },
+          },
+          required: ['machineId'],
+          additionalProperties: false,
+        },
       }
     );
   }
@@ -114,6 +130,14 @@ async function callTool(name, args = {}) {
     return mgmtFetch(cfg, '/api/v1/providers/machines/schedule', {
       method: 'POST',
       body: { accepting },
+    });
+  }
+  if (name === 'scalattice_fleet_reconnect') {
+    const machineId = String(args.machineId || args.machine || args.id || '').trim();
+    if (!machineId) throw new Error('machineId is required');
+    return mgmtFetch(cfg, `/api/v1/providers/machines/${machineId}/reconnect`, {
+      method: 'POST',
+      body: {},
     });
   }
   throw new Error(`Unknown tool: ${name}`);
