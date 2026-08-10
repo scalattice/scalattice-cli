@@ -160,3 +160,14 @@ export async function cmdProviderSchedule(args) {
     `${m.id || id}\t${m.name || ''}\t${m.scheduleMode || mode}\taccepting=${m.acceptingJobs ? 'yes' : 'no'}`
   );
 }
+
+export async function cmdProviderReconnect(args) {
+  const cfg = requireMgmt(loadConfig());
+  const id = String(args.machine || args.id || '').trim();
+  if (!id) throw new Error('Usage: scalattice provider reconnect --machine ID');
+  const data = await mgmtFetch(cfg, `/api/v1/providers/machines/${id}/reconnect`, {
+    method: 'POST',
+    body: {},
+  });
+  print(data.message || `Re-connect requested for ${data.id || id} (disconnected=${data.disconnected ?? 0}).`);
+}
