@@ -18,6 +18,8 @@ import {
 import { runMcpServer } from './commands/mcp.js';
 import { print } from './io.js';
 import { configPath } from './config.js';
+import readline from 'node:readline/promises';
+import { stdin as input, stdout as output } from 'node:process';
 
 const HELP = `scalattice - CLI for Scalattice Cloud (developers + providers)
 
@@ -26,6 +28,7 @@ Keys:
   slt_…       inference only (OpenAI SDK) — SCALATTICE_API_KEY / OPENAI_API_KEY
 
 Usage:
+  scalattice
   scalattice setup [--email you@example.com] [--login] [--new-key]
   scalattice login [--email you@example.com]
   scalattice logout
@@ -56,6 +59,35 @@ Config file: ${configPath()}
 Env overrides: SCALATTICE_CLOUD_URL, SCALATTICE_API_URL, SCALATTICE_API_KEY,
   SCALATTICE_MGMT_KEY, SCALATTICE_SESSION_TOKEN
 `;
+
+const SHELL_HELP = `Commands:
+  whoami
+  setup [--email …] [--login] [--new-key]
+  login [--email …]
+  logout
+  credits
+  keys list
+  keys create [--name NAME]
+  init
+  provider setup|machines|earnings|pause|resume|keys|schedule|reconnect
+  help
+  exit
+
+One-shot from any terminal: scalattice <command>
+Config: ${configPath()}`;
+
+function parseLine(line) {
+  const parts = String(line || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (parts[0] === 'scalattice') parts.shift();
+  return parts;
+}
+
+function usage(shell, oneShot, shellForm) {
+  return shell ? shellForm : oneShot;
+}
 
 function parseArgs(argv) {
   const flags = {};
@@ -90,7 +122,7 @@ async function runProvider(sub, rest, flags) {
       else if (action === 'create') await cmdProviderKeysCreate(flags);
       else if (action === 'roll') await cmdProviderKeysRoll(flags);
       else if (action === 'revoke') await cmdProviderKeysRevoke(flags);
-      else throw new Error('Usage: scalattice provider keys list|create|roll|revoke');
+      else throw new Error(usage(flags.shell, 'Usage: scalattice provider keys list|create|roll|revoke', 'Usage: provider keys list|create|roll|revoke'));
       break;
     }
     case 'machines':
@@ -113,17 +145,22 @@ async function runProvider(sub, rest, flags) {
       break;
     default:
       throw new Error(
-        `Usage: scalattice provider setup|keys|machines|earnings|pause|resume|schedule|reconnect\n\n${HELP}`
+        usage(
+          flags.shell,
+          `Usage: scalattice provider setup|keys|machines|earnings|pause|resume|schedule|reconnect\n\n${HELP}`,
+          'Usage: provider setup|keys|machines|earnings|pause|resume|schedule|reconnect'
+        )
       );
   }
 }
 
-export async function main(argv) {
+async function dispatch(argv, { shell = false } = {}) {
   const { flags, positionals } = parseArgs(argv);
+  flags.shell = shell;
   const [cmd, sub, ...rest] = positionals;
 
   if (!cmd || flags.help || cmd === 'help') {
-    print(HELP.trim());
+    print((shell ? SHELL_HELP : HELP).trim());
     return;
   }
 
@@ -140,7 +177,7 @@ export async function main(argv) {
     case 'keys':
       if (sub === 'list') await cmdKeysList();
       else if (sub === 'create') await cmdKeysCreate(flags);
-      else throw new Error('Usage: scalattice keys list|create');
+      else throw new Error(usage(shell, 'Usage: scalattice keys list|create', 'Usage: keys list|create'));
       break;
     case 'provider':
       await runProvider(sub, rest, flags);
@@ -158,6 +195,58 @@ export async function main(argv) {
       await runMcpServer();
       break;
     default:
-      throw new Error(`Unknown command: ${cmd}\n\n${HELP}`);
+      throw new Error(
+        shell ? `Unknown command: ${cmd}. Try help.` : `Unknown command: ${cmd}\n\n${HELP}`
+      );
   }
+}
+
+async function runPrompt() {
+  print('');
+  try {
+    await cmdWhoami();
+  } catch (err) {
+    print(err?.message || String(err));
+  }
+  print('');
+  print('Type a command (help, exit).');
+  const rl = readline.createInterface({ input, output, terminal: true });
+  try {
+    while (true) {
+      const line = await rl.question('scalattice> ');
+      const argv = parseLine(line);
+      if (!argv.length) continue;
+      if (argv[0] === 'exit' || argv[0] === 'quit') break;
+      if (argv[0] === 'mcp') {
+        print('mcp is a stdio server. Leave this prompt and run: scalattice mcp');
+        continue;
+      }
+      try {
+        await dispatch(argv, { shell: true });
+      } catch (err) {
+        print(err?.message || String(err));
+      }
+    }
+  } finally {
+    rl.close();
+  }
+}
+
+export async function main(argv) {
+  const { flags, positionals } = parseArgs(argv);
+  const [cmd] = positionals;
+
+  if (flags.help || cmd === 'help') {
+    print(HELP.trim());
+    return;
+  }
+  if (!cmd) {
+    if (input.isTTY && output.isTTY) {
+      await runPrompt();
+      return;
+    }
+    print(HELP.trim());
+    return;
+  }
+  await dispatch(argv);
 }

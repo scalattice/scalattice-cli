@@ -7,7 +7,7 @@
 [![npm](https://img.shields.io/npm/v/scalattice-cli.svg)](https://www.npmjs.com/package/scalattice-cli)
 [![license](https://img.shields.io/npm/l/scalattice-cli.svg)](./LICENSE)
 
-Sign in, mint an account management key (`slt_mgmt_…`) for automation, create an inference API key (`slt_…`) for OpenAI-compatible SDKs, check credits, and manage a provider fleet from the terminal. Optional MCP mode for AI coding agents.
+Sign in from a terminal, land in an interactive CLI, mint an account management key (`slt_mgmt_…`) for automation, create an inference API key (`slt_…`) for OpenAI-compatible SDKs, check credits, and manage a provider fleet. Optional MCP mode for AI coding agents.
 
 **Product:** [scalattice.com/cli](https://scalattice.com/cli/) · **npm:** [scalattice-cli](https://www.npmjs.com/package/scalattice-cli) · **Cloud docs:** [developers#cli](https://scalattice.cloud/docs/developers#cli) · [providers#fleet-api](https://scalattice.cloud/docs/providers#fleet-api) · **Installer:** [scalattice.cloud/install/cli](https://scalattice.cloud/install/cli)
 
@@ -21,13 +21,31 @@ curl -fsSL https://scalattice.cloud/install/cli | sh
 npm install -g scalattice-cli
 ```
 
+Or sign in on [Cloud /auth](https://scalattice.cloud/auth) and run the curl command shown there. That stores a session in `~/.config/scalattice/config.json`, signs the browser tab in, installs this CLI if needed, and opens the prompt.
+
 ## Quick start
 
 ```bash
-scalattice setup
-eval "$(scalattice init)"
-scalattice credits
+scalattice
 ```
+
+You get a `scalattice>` prompt. Type commands without the `scalattice` prefix:
+
+```
+scalattice> whoami
+scalattice> setup
+scalattice> credits
+scalattice> help
+scalattice> exit
+```
+
+`setup` mints an account management key and an inference key. Then:
+
+```bash
+eval "$(scalattice init)"
+```
+
+One-shot from any shell still works: `scalattice setup`, `scalattice whoami`, and the rest.
 
 Then use any OpenAI SDK:
 
@@ -45,24 +63,27 @@ print(client.models.list())
 | `slt_…` | Inference only (chat/completions via `api.*`) |
 | `slt_provider_…` | Machine agent tokens (not for this CLI) |
 
-Create/roll management keys on [Account](https://scalattice.cloud/account) or via `scalattice setup` / `scalattice provider keys`.
+Create/roll management keys on [Account](https://scalattice.cloud/account) or via `setup` / `provider keys`.
 
 ## Commands
 
+Inside the prompt, drop the `scalattice` prefix. From a normal terminal, keep it.
+
 | Command | What it does |
 | --- | --- |
-| `scalattice setup` | Login → mint mgmt key → create inference key → print exports |
-| `scalattice login` / `logout` | Session only |
-| `scalattice keys list` / `keys create` | Inference API keys (via mgmt key) |
-| `scalattice init` | Print `export OPENAI_BASE_URL=...` and `OPENAI_API_KEY=...` |
-| `scalattice credits` | Wallet + model grants (via mgmt key) |
-| `scalattice whoami` | Show config / account |
-| `scalattice provider setup` | Ensure provider audience + mgmt key |
-| `scalattice provider machines` / `earnings` | Fleet status and earnings |
-| `scalattice provider pause` / `resume` | Pause or resume all machines |
-| `scalattice provider schedule` | Patch one machine’s schedule |
-| `scalattice provider keys …` | List / create / roll / revoke management keys (session) |
-| `scalattice mcp` | MCP stdio server for Cursor / Claude Desktop |
+| `scalattice` | Interactive prompt (`setup`, `whoami`, …) |
+| `setup` | Login → mint mgmt key → create inference key → print exports |
+| `login` / `logout` | Session only |
+| `keys list` / `keys create` | Inference API keys (via mgmt key) |
+| `init` | Print `export OPENAI_BASE_URL=...` and `OPENAI_API_KEY=...` |
+| `credits` | Wallet + model grants (via mgmt key) |
+| `whoami` | Show config / account |
+| `provider setup` | Ensure provider audience + mgmt key |
+| `provider machines` / `earnings` | Fleet status and earnings |
+| `provider pause` / `resume` | Pause or resume all machines |
+| `provider schedule` | Patch one machine’s schedule |
+| `provider keys …` | List / create / roll / revoke management keys (session) |
+| `mcp` | MCP stdio server (run as `scalattice mcp`, not inside the prompt) |
 
 Config: `~/.config/scalattice/config.json` (mode `0600`).
 
@@ -80,7 +101,7 @@ See [Fleet API docs](https://scalattice.cloud/docs/providers#fleet-api).
 
 ## MCP (optional)
 
-MCP is **not** a second install. After `scalattice setup`:
+MCP is **not** a second install. After `setup`, leave the prompt and run `scalattice mcp`:
 
 ```json
 {

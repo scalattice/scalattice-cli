@@ -1,4 +1,4 @@
-import { mgmtFetch } from '../api.js';
+import { cloudFetch, mgmtFetch } from '../api.js';
 import { loadConfig } from '../config.js';
 import { print } from '../io.js';
 import { requireMgmt } from './mgmt.js';
@@ -52,7 +52,15 @@ export async function cmdWhoami() {
   print(`Session: ${cfg.sessionToken ? 'yes' : 'no'}`);
   print(`Mgmt key: ${cfg.mgmtKey ? `...${cfg.mgmtKey.slice(-4)}` : '(none)'}`);
   print(`API key:  ${cfg.apiKey ? `...${cfg.apiKey.slice(-4)}` : '(none)'}`);
-  if (cfg.mgmtKey) {
+  if (cfg.sessionToken) {
+    try {
+      const me = await cloudFetch(cfg, '/api/v1/account/me', { token: cfg.sessionToken });
+      if (me?.email) print(`Account: ${me.email}${me.name ? ` (${me.name})` : ''}`);
+      if (me?.accountAudience) print(`Audience: ${me.accountAudience}`);
+    } catch {
+      /* ignore */
+    }
+  } else if (cfg.mgmtKey) {
     try {
       const me = await mgmtFetch(cfg, '/api/v1/account/me');
       if (me?.email) print(`Account: ${me.email}${me.name ? ` (${me.name})` : ''}`);
