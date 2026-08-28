@@ -1,5 +1,5 @@
 import { cloudFetch } from '../api.js';
-import { loadConfig, saveConfig } from '../config.js';
+import { loadConfig, saveSession, clearSecrets } from '../config.js';
 import { print, prompt } from '../io.js';
 
 export async function cmdLogin(args) {
@@ -27,25 +27,15 @@ export async function cmdLogin(args) {
     throw new Error('Login succeeded but no session token was returned. Redeploy the cloud backend with CLI auth support.');
   }
 
-  saveConfig({
-    sessionToken: data.token,
-    email: data.user?.email || email,
-  });
-  print(`Signed in as ${data.user?.email || email}`);
+  const nextEmail = data.user?.email || email;
+  saveSession(data.token, nextEmail);
+  print(`Signed in as ${nextEmail}`);
   return loadConfig();
 }
 
 export async function cmdLogout() {
-  saveConfig({
-    sessionToken: '',
-    apiKey: '',
-    apiKeyId: '',
-    apiKeyName: '',
-    mgmtKey: '',
-    mgmtKeyId: '',
-    mgmtKeyName: '',
-  });
-  print('Signed out. Session and stored keys cleared.');
+  clearSecrets();
+  print('Signed out. Session cleared.');
 }
 
 export async function ensureDeveloperAudience(cfg) {

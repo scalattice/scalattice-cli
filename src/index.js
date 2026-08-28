@@ -23,13 +23,12 @@ import { stdin as input, stdout as output } from 'node:process';
 
 const HELP = `scalattice - CLI for Scalattice Cloud (developers + providers)
 
-Keys:
-  slt_mgmt_…  account management (credits, keys CRUD, fleet) — SCALATTICE_MGMT_KEY
-  slt_…       inference only (OpenAI SDK) — SCALATTICE_API_KEY / OPENAI_API_KEY
+The CLI stores a session (same idea as the Cloud cookie). It does not store
+API keys or management keys. For the OpenAI SDK or MCP, export them yourself.
 
 Usage:
   scalattice
-  scalattice setup [--email you@example.com] [--login] [--new-key]
+  scalattice setup [--email you@example.com] [--login]
   scalattice login [--email you@example.com]
   scalattice logout
   scalattice keys list
@@ -39,8 +38,8 @@ Usage:
   scalattice whoami
   scalattice mcp
 
-Provider fleet (uses account management key):
-  scalattice provider setup [--email …] [--new-key] [--name NAME] [--paste KEY]
+Provider fleet:
+  scalattice provider setup [--email …]
   scalattice provider keys list|create|roll|revoke
   scalattice provider machines
   scalattice provider earnings
@@ -50,19 +49,19 @@ Provider fleet (uses account management key):
   scalattice provider reconnect --machine ID
 
 Quick start:
-  1. scalattice setup          # mints mgmt key + inference key
-  2. eval "$(scalattice init)" # OpenAI env for SDKs
-  3. scalattice credits
-  4. scalattice provider machines   # if you host GPUs
+  1. scalattice login
+  2. scalattice credits
+  3. scalattice keys create          # prints an inference key once
+  4. eval "$(scalattice init)"       # after OPENAI_API_KEY is in the env
 
 Config file: ${configPath()}
-Env overrides: SCALATTICE_CLOUD_URL, SCALATTICE_API_URL, SCALATTICE_API_KEY,
-  SCALATTICE_MGMT_KEY, SCALATTICE_SESSION_TOKEN
+Env: SCALATTICE_CLOUD_URL, SCALATTICE_API_URL, SCALATTICE_SESSION_TOKEN,
+  SCALATTICE_API_KEY, OPENAI_API_KEY, SCALATTICE_MGMT_KEY
 `;
 
 const SHELL_HELP = `Commands:
   whoami
-  setup [--email …] [--login] [--new-key]
+  setup [--email …] [--login]
   login [--email …]
   logout
   credits

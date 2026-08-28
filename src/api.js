@@ -36,9 +36,9 @@ export async function cloudFetch(cfg, path, { method = 'GET', body, token, cli =
  * `path` is absolute under cloud origin, e.g. `/api/v1/developers/keys`.
  */
 export async function mgmtFetch(cfg, path, { method = 'GET', body, mgmtKey } = {}) {
-  const key = mgmtKey || cfg.mgmtKey;
+  const key = mgmtKey || cfg.mgmtKey || cfg.sessionToken;
   if (!key) {
-    throw new Error('No account management key. Run: scalattice setup');
+    throw new Error('Not signed in. Run: scalattice login');
   }
   const suffix = path.startsWith('/') ? path : `/${path}`;
   const url = `${cfg.cloudUrl}${suffix}`;

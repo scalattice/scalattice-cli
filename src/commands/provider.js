@@ -1,8 +1,8 @@
 import { cloudFetch, mgmtFetch } from '../api.js';
-import { loadConfig, saveConfig } from '../config.js';
+import { loadConfig } from '../config.js';
 import { print, prompt } from '../io.js';
 import { cmdLogin, ensureProviderAudience } from './login.js';
-import { ensureMgmtKey, requireMgmt, requireSession } from './mgmt.js';
+import { requireCloudAuth, requireSession } from './mgmt.js';
 
 export async function cmdProviderSetup(args) {
   let cfg = loadConfig();
@@ -11,14 +11,9 @@ export async function cmdProviderSetup(args) {
   }
   requireSession(cfg);
   await ensureProviderAudience(cfg);
-  cfg = await ensureMgmtKey({
-    ...args,
-    yes: true,
-    name: args.name || 'CLI management key',
-  });
+  print('Signed in. Fleet commands use this session.');
   print('Try: scalattice provider machines');
   print('     scalattice provider earnings');
-  print('     scalattice mcp');
   return cfg;
 }
 
@@ -49,13 +44,11 @@ export async function cmdProviderKeysCreate(args) {
   });
   const secret = data.secret;
   if (!secret) throw new Error('Key created but secret missing from response');
-  saveConfig({
-    mgmtKey: secret,
-    mgmtKeyId: String(data.key?.id || ''),
-    mgmtKeyName: data.key?.name || name,
-  });
-  print('Account management key created and saved locally (shown once):');
+  print('Account management key (shown once, not stored):');
   print(secret);
+  print('');
+  print('For MCP / scripts:');
+  print(`  export SCALATTICE_MGMT_KEY=${secret}`);
 }
 
 export async function cmdProviderKeysRoll(args) {
@@ -68,14 +61,7 @@ export async function cmdProviderKeysRoll(args) {
   });
   const secret = data.secret;
   if (!secret) throw new Error('Key rolled but secret missing from response');
-  if (String(cfg.mgmtKeyId) === id || !cfg.mgmtKeyId) {
-    saveConfig({
-      mgmtKey: secret,
-      mgmtKeyId: String(data.key?.id || id),
-      mgmtKeyName: data.key?.name || cfg.mgmtKeyName,
-    });
-  }
-  print('Account management key rolled (new secret shown once):');
+  print('Account management key rolled (new secret shown once, not stored):');
   print(secret);
 }
 
@@ -87,14 +73,11 @@ export async function cmdProviderKeysRevoke(args) {
     method: 'DELETE',
     token: cfg.sessionToken,
   });
-  if (String(cfg.mgmtKeyId) === id) {
-    saveConfig({ mgmtKey: '', mgmtKeyId: '', mgmtKeyName: '' });
-  }
   print(`Revoked account management key ${id}`);
 }
 
 export async function cmdProviderMachines() {
-  const cfg = requireMgmt(loadConfig());
+  const cfg = requireCloudAuth(loadConfig());
   const data = await mgmtFetch(cfg, '/api/v1/providers/machines');
   const machines = data.machines || [];
   if (!machines.length) {
@@ -112,7 +95,7 @@ export async function cmdProviderMachines() {
 }
 
 export async function cmdProviderEarnings() {
-  const cfg = requireMgmt(loadConfig());
+  const cfg = requireCloudAuth(loadConfig());
   const data = await mgmtFetch(cfg, '/api/v1/providers/earnings');
   print(`totalEarnedUsd\t${Number(data.totalEarnedUsd || 0).toFixed(4)}`);
   print(`pendingPayoutUsd\t${Number(data.pendingPayoutUsd || 0).toFixed(4)}`);
@@ -120,7 +103,7 @@ export async function cmdProviderEarnings() {
 }
 
 export async function cmdProviderPause() {
-  const cfg = requireMgmt(loadConfig());
+  const cfg = requireCloudAuth(loadConfig());
   const data = await mgmtFetch(cfg, '/api/v1/providers/machines/schedule', {
     method: 'POST',
     body: { accepting: false },
@@ -129,7 +112,7 @@ export async function cmdProviderPause() {
 }
 
 export async function cmdProviderResume() {
-  const cfg = requireMgmt(loadConfig());
+  const cfg = requireCloudAuth(loadConfig());
   const data = await mgmtFetch(cfg, '/api/v1/providers/machines/schedule', {
     method: 'POST',
     body: { accepting: true },
@@ -138,7 +121,7 @@ export async function cmdProviderResume() {
 }
 
 export async function cmdProviderSchedule(args) {
-  const cfg = requireMgmt(loadConfig());
+  const cfg = requireCloudAuth(loadConfig());
   const id = String(args.machine || args.id || '').trim();
   if (!id) throw new Error('Usage: scalattice provider schedule --machine ID --mode always|paused|windows');
   const mode = String(args.mode || '').trim();
@@ -162,7 +145,7 @@ export async function cmdProviderSchedule(args) {
 }
 
 export async function cmdProviderReconnect(args) {
-  const cfg = requireMgmt(loadConfig());
+  const cfg = requireCloudAuth(loadConfig());
   const id = String(args.machine || args.id || '').trim();
   if (!id) throw new Error('Usage: scalattice provider reconnect --machine ID');
   const data = await mgmtFetch(cfg, `/api/v1/providers/machines/${id}/reconnect`, {

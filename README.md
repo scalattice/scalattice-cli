@@ -39,10 +39,11 @@ scalattice> help
 scalattice> exit
 ```
 
-`setup` mints an account management key and an inference key. Then:
+`login` stores a session only. For the OpenAI SDK, create a key and export it:
 
 ```bash
-eval "$(scalattice init)"
+scalattice keys create
+eval "$(scalattice init)"   # after OPENAI_API_KEY is in the env
 ```
 
 One-shot from any shell still works: `scalattice setup`, `scalattice whoami`, and the rest.
@@ -63,7 +64,7 @@ print(client.models.list())
 | `slt_…` | Inference only (chat/completions via `api.*`) |
 | `slt_provider_…` | Machine agent tokens (not for this CLI) |
 
-Create/roll management keys on [Account](https://scalattice.cloud/account) or via `setup` / `provider keys`.
+Create management keys on [Account](https://scalattice.cloud/account) or `provider keys create` if you need a long-lived secret for MCP. The CLI itself uses your session.
 
 ## Commands
 
@@ -72,20 +73,20 @@ Inside the prompt, drop the `scalattice` prefix. From a normal terminal, keep it
 | Command | What it does |
 | --- | --- |
 | `scalattice` | Interactive prompt (`setup`, `whoami`, …) |
-| `setup` | Login → mint mgmt key → create inference key → print exports |
-| `login` / `logout` | Session only |
-| `keys list` / `keys create` | Inference API keys (via mgmt key) |
-| `init` | Print `export OPENAI_BASE_URL=...` and `OPENAI_API_KEY=...` |
-| `credits` | Wallet + model grants (via mgmt key) |
-| `whoami` | Show config / account |
-| `provider setup` | Ensure provider audience + mgmt key |
+| `setup` | Login and set developer workspace |
+| `login` / `logout` | Session only (what `config.json` stores) |
+| `keys list` / `keys create` | Inference API keys (prints secret once; not stored) |
+| `init` | Print OpenAI env exports (needs `OPENAI_API_KEY` in the env) |
+| `credits` | Wallet + model grants |
+| `whoami` | Show session / account |
+| `provider setup` | Login and set provider workspace |
 | `provider machines` / `earnings` | Fleet status and earnings |
 | `provider pause` / `resume` | Pause or resume all machines |
 | `provider schedule` | Patch one machine’s schedule |
-| `provider keys …` | List / create / roll / revoke management keys (session) |
+| `provider keys …` | List / create / roll / revoke management keys (prints secret once) |
 | `mcp` | MCP stdio server (run as `scalattice mcp`, not inside the prompt) |
 
-Config: `~/.config/scalattice/config.json` (mode `0600`).
+Config: `~/.config/scalattice/config.json` (mode `0600`) — session + email only. Keys are never written there.
 
 Env overrides: `SCALATTICE_CLOUD_URL`, `SCALATTICE_API_URL`, `SCALATTICE_API_KEY`, `SCALATTICE_MGMT_KEY`, `SCALATTICE_SESSION_TOKEN`.
 
@@ -101,7 +102,7 @@ See [Fleet API docs](https://scalattice.cloud/docs/providers#fleet-api).
 
 ## MCP (optional)
 
-MCP is **not** a second install. After `setup`, leave the prompt and run `scalattice mcp`:
+MCP is **not** a second install. After `login`, leave the prompt and run `scalattice mcp`. For a headless agent without a session, set `SCALATTICE_MGMT_KEY` in that environment.
 
 ```json
 {

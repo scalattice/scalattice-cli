@@ -20,44 +20,38 @@ export function configPath() {
   return path.join(configDir(), 'config.json');
 }
 
-export function loadConfig() {
-  const file = configPath();
-  let stored = {};
+function readStored() {
   try {
-    stored = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const parsed = JSON.parse(fs.readFileSync(configPath(), 'utf8'));
+    return parsed && typeof parsed === 'object' ? parsed : {};
   } catch {
-    stored = {};
+    return {};
   }
+}
+
+export function loadConfig() {
+  const stored = readStored();
   return {
     cloudUrl: String(process.env.SCALATTICE_CLOUD_URL || stored.cloudUrl || DEFAULTS.cloudUrl).replace(/\/+$/, ''),
     apiUrl: String(process.env.SCALATTICE_API_URL || stored.apiUrl || DEFAULTS.apiUrl).replace(/\/+$/, ''),
     sessionToken: process.env.SCALATTICE_SESSION_TOKEN || stored.sessionToken || '',
     email: stored.email || '',
-    apiKey: process.env.SCALATTICE_API_KEY || process.env.OPENAI_API_KEY || stored.apiKey || '',
-    apiKeyId: stored.apiKeyId || '',
-    apiKeyName: stored.apiKeyName || '',
-    mgmtKey: process.env.SCALATTICE_MGMT_KEY || stored.mgmtKey || '',
-    mgmtKeyId: stored.mgmtKeyId || '',
-    mgmtKeyName: stored.mgmtKeyName || '',
+    // Keys are never persisted. Env only, for MCP / OpenAI SDK.
+    apiKey: process.env.SCALATTICE_API_KEY || process.env.OPENAI_API_KEY || '',
+    mgmtKey: process.env.SCALATTICE_MGMT_KEY || '',
   };
 }
 
 export function saveConfig(patch) {
   const dir = configDir();
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const next = { ...loadConfig(), ...patch };
-  // Don't persist env-only overrides as empty wipes.
+  const stored = readStored();
+  const next = { ...stored, ...patch };
   const fileBody = {
-    cloudUrl: next.cloudUrl,
-    apiUrl: next.apiUrl,
+    cloudUrl: next.cloudUrl || DEFAULTS.cloudUrl,
+    apiUrl: next.apiUrl || DEFAULTS.apiUrl,
     sessionToken: next.sessionToken || undefined,
     email: next.email || undefined,
-    apiKey: next.apiKey || undefined,
-    apiKeyId: next.apiKeyId || undefined,
-    apiKeyName: next.apiKeyName || undefined,
-    mgmtKey: next.mgmtKey || undefined,
-    mgmtKeyId: next.mgmtKeyId || undefined,
-    mgmtKeyName: next.mgmtKeyName || undefined,
   };
   const file = configPath();
   fs.writeFileSync(file, `${JSON.stringify(fileBody, null, 2)}\n`, { mode: 0o600 });
@@ -69,14 +63,16 @@ export function saveConfig(patch) {
   return loadConfig();
 }
 
+export function saveSession(token, email) {
+  return saveConfig({
+    sessionToken: token || '',
+    email: String(email || '').trim(),
+  });
+}
+
 export function clearSecrets() {
   return saveConfig({
     sessionToken: '',
-    apiKey: '',
-    apiKeyId: '',
-    apiKeyName: '',
-    mgmtKey: '',
-    mgmtKeyId: '',
-    mgmtKeyName: '',
+    email: '',
   });
 }

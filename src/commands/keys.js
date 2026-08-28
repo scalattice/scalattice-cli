@@ -1,10 +1,10 @@
 import { mgmtFetch } from '../api.js';
-import { loadConfig, saveConfig } from '../config.js';
+import { loadConfig } from '../config.js';
 import { print, prompt } from '../io.js';
-import { ensureMgmtKey, requireMgmt } from './mgmt.js';
+import { requireCloudAuth } from './mgmt.js';
 
 export async function cmdKeysList() {
-  const cfg = requireMgmt(loadConfig());
+  const cfg = requireCloudAuth(loadConfig());
   const data = await mgmtFetch(cfg, '/api/v1/developers/keys');
   const keys = data.keys || data || [];
   if (!Array.isArray(keys) || !keys.length) {
@@ -18,11 +18,7 @@ export async function cmdKeysList() {
 }
 
 export async function cmdKeysCreate(args) {
-  let cfg = loadConfig();
-  if (!cfg.mgmtKey) {
-    cfg = await ensureMgmtKey({ ...args, yes: true });
-  }
-  requireMgmt(cfg);
+  const cfg = requireCloudAuth(loadConfig());
   const name =
     args.name ||
     (args.yes ? 'CLI key' : await prompt('Key name', { defaultValue: 'CLI key' }));
@@ -32,15 +28,10 @@ export async function cmdKeysCreate(args) {
   });
   const secret = data.secret;
   if (!secret) throw new Error('Key created but secret missing from response');
-  saveConfig({
-    apiKey: secret,
-    apiKeyId: String(data.key?.id || ''),
-    apiKeyName: data.key?.name || name,
-  });
-  print('Inference API key created and saved locally (shown once):');
+  print('Inference API key (shown once, not stored):');
   print(secret);
   print('');
-  print('Add to your shell:');
+  print('Add to your shell for the OpenAI SDK:');
   print(`  export OPENAI_BASE_URL=${cfg.apiUrl}`);
   print(`  export OPENAI_API_KEY=${secret}`);
   return secret;
