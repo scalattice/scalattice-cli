@@ -33,7 +33,7 @@ You get a `scalattice>` prompt. Type commands without the `scalattice` prefix:
 
 ```
 scalattice> whoami
-scalattice> setup
+scalattice> login
 scalattice> credits
 scalattice> help
 scalattice> exit
@@ -46,7 +46,7 @@ scalattice developers keys create
 eval "$(scalattice init)"   # after OPENAI_API_KEY is in the env
 ```
 
-One-shot from any shell still works: `scalattice setup`, `scalattice whoami`, and the rest.
+One-shot from any shell still works: `scalattice login`, `scalattice whoami`, and the rest.
 
 Then use any OpenAI SDK:
 
@@ -72,16 +72,13 @@ Inside the prompt, drop the `scalattice` prefix. From a normal terminal, keep it
 
 | Command | What it does |
 | --- | --- |
-| `scalattice` | Interactive prompt (`setup`, `whoami`, …) |
-| `setup` | Login and set developer workspace |
+| `scalattice` | Interactive prompt (`login`, `whoami`, …) |
 | `login` / `logout` | Session only (what `config.json` stores) |
-| `developers setup` | Login and set developer workspace |
 | `developers keys list|create|roll|revoke` | Inference API keys (prints secret once; not stored) |
 | `account keys list|create|roll|revoke` | Account management keys (prints secret once; not stored) |
 | `init` | Print OpenAI env exports (needs `OPENAI_API_KEY` in the env) |
 | `credits` | Wallet + model grants |
 | `whoami` | Show session / account |
-| `provider setup` | Login and set provider workspace |
 | `provider machines` | List fleet (id, status, token last four) |
 | `provider machines create` | Add a machine (prints `slt_provider_…` once) |
 | `provider machines roll` | New token for an existing machine (prints once) |
@@ -91,6 +88,8 @@ Inside the prompt, drop the `scalattice` prefix. From a normal terminal, keep it
 | `provider schedule` | Patch one machine’s schedule |
 | `mcp` | MCP stdio server (run as `scalattice mcp`, not inside the prompt) |
 
+`developer`/`developers`, `provider`/`providers`, `machine`/`machines`, and `key`/`keys` are aliases.
+
 Config: `~/.config/scalattice/config.json` (mode `0600`) — session + email only. Keys are never written there.
 
 Env overrides: `SCALATTICE_CLOUD_URL`, `SCALATTICE_API_URL`, `SCALATTICE_API_KEY`, `SCALATTICE_MGMT_KEY`, `SCALATTICE_SESSION_TOKEN`.
@@ -98,7 +97,7 @@ Env overrides: `SCALATTICE_CLOUD_URL`, `SCALATTICE_API_URL`, `SCALATTICE_API_KEY
 ## Provider fleet
 
 ```bash
-scalattice provider setup
+scalattice login
 scalattice provider machines create
 scalattice provider machines
 scalattice provider pause   # or resume

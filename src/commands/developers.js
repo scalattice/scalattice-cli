@@ -1,21 +1,7 @@
 import { mgmtFetch } from '../api.js';
 import { loadConfig } from '../config.js';
 import { print, prompt } from '../io.js';
-import { cmdLogin, ensureDeveloperAudience } from './login.js';
-import { requireCloudAuth, requireSession } from './mgmt.js';
-
-export async function cmdDevelopersSetup(args) {
-  let cfg = loadConfig();
-  if (!cfg.sessionToken || args.forceLogin) {
-    cfg = await cmdLogin(args);
-  }
-  requireSession(cfg);
-  await ensureDeveloperAudience(cfg);
-  print('Signed in. Inference commands use this session.');
-  print('Try: scalattice developers keys create');
-  print('     scalattice credits');
-  return cfg;
-}
+import { requireCloudAuth } from './mgmt.js';
 
 export async function cmdDevelopersKeysList() {
   const cfg = requireCloudAuth(loadConfig());

@@ -1,6 +1,5 @@
-import { cmdLogin, cmdLogout } from './commands/login.js';
+import { cmdLogin, cmdLogout, ensureDeveloperAudience, ensureProviderAudience } from './commands/login.js';
 import {
-  cmdDevelopersSetup,
   cmdDevelopersKeysList,
   cmdDevelopersKeysCreate,
   cmdDevelopersKeysRoll,
@@ -15,7 +14,6 @@ import {
 import { cmdCredits, cmdInit, cmdWhoami } from './commands/misc.js';
 import { cmdSetup } from './commands/setup.js';
 import {
-  cmdProviderSetup,
   cmdProviderMachinesList,
   cmdProviderMachinesCreate,
   cmdProviderMachinesRoll,
@@ -28,7 +26,7 @@ import {
 } from './commands/provider.js';
 import { runMcpServer } from './commands/mcp.js';
 import { print, setPromptInterface } from './io.js';
-import { configPath } from './config.js';
+import { configPath, loadConfig } from './config.js';
 import readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 
@@ -39,7 +37,6 @@ API keys or management keys. For the OpenAI SDK or MCP, export them yourself.
 
 Usage:
   scalattice
-  scalattice setup [--email you@example.com] [--login]
   scalattice login [--email you@example.com]
   scalattice logout
   scalattice init
@@ -48,14 +45,12 @@ Usage:
   scalattice mcp
 
 Developers (inference API keys slt_…):
-  scalattice developers setup [--email …]
   scalattice developers keys list|create|roll|revoke
 
 Account (management keys slt_mgmt_…):
   scalattice account keys list|create|roll|revoke
 
 Provider fleet:
-  scalattice provider setup [--email …]
   scalattice provider machines
   scalattice provider machines create [--name NAME]
   scalattice provider machines roll --machine ID
@@ -65,6 +60,8 @@ Provider fleet:
   scalattice provider resume
   scalattice provider schedule --machine ID --mode always|paused|windows [--windows JSON]
   scalattice provider reconnect --machine ID
+
+Aliases: developer/developers, provider/providers, machine/machines, key/keys.
 
 Quick start:
   1. scalattice login
@@ -79,17 +76,17 @@ Env: SCALATTICE_CLOUD_URL, SCALATTICE_API_URL, SCALATTICE_SESSION_TOKEN,
 
 const SHELL_HELP = `Commands:
   whoami
-  setup [--email …] [--login]
   login [--email …]
   logout
   credits
-  developers setup|keys list|create|roll|revoke
+  developers keys list|create|roll|revoke
   account keys list|create|roll|revoke
   init
-  provider setup|machines [list|create|roll|revoke]|earnings|pause|resume|schedule|reconnect
+  provider machines [list|create|roll|revoke]|earnings|pause|resume|schedule|reconnect
   help
   exit
 
+Aliases: developer, providers, machine, key
 One-shot from any terminal: scalattice <command>
 Config: ${configPath()}`;
 
@@ -107,6 +104,44 @@ function parseLine(line) {
 
 function usage(shell, oneShot, shellForm) {
   return shell ? shellForm : oneShot;
+}
+
+function canon(word, aliases) {
+  const w = String(word || '').toLowerCase();
+  return aliases[w] || w;
+}
+
+const CMD_ALIAS = {
+  developer: 'developers',
+  developers: 'developers',
+  provider: 'provider',
+  providers: 'provider',
+};
+
+function asKeys(word) {
+  return canon(word, { key: 'keys', keys: 'keys' });
+}
+
+function asMachines(word) {
+  return canon(word, { machine: 'machines', machines: 'machines' });
+}
+
+function topicOf(sub) {
+  const keys = asKeys(sub);
+  if (keys === 'keys' && (sub === 'key' || sub === 'keys')) return 'keys';
+  const machines = asMachines(sub);
+  if (machines === 'machines' && (sub === 'machine' || sub === 'machines')) return 'machines';
+  return sub;
+}
+
+async function withDeveloperWorkspace() {
+  const cfg = loadConfig();
+  if (cfg.sessionToken) await ensureDeveloperAudience(cfg);
+}
+
+async function withProviderWorkspace() {
+  const cfg = loadConfig();
+  if (cfg.sessionToken) await ensureProviderAudience(cfg);
 }
 
 function parseArgs(argv) {
@@ -155,10 +190,17 @@ async function runKeysGroup(action, rest, flags, {
 }
 
 async function runDevelopers(sub, rest, flags) {
-  switch (sub) {
-    case 'setup':
-      await cmdDevelopersSetup(flags);
-      break;
+  if (sub === 'setup') {
+    throw new Error(
+      usage(
+        flags.shell,
+        'No setup step. Use: scalattice login, then developers keys create',
+        'No setup step. Use: login, then developers keys create'
+      )
+    );
+  }
+  await withDeveloperWorkspace();
+  switch (topicOf(sub)) {
     case 'keys':
       await runKeysGroup(rest[0], rest, flags, {
         list: cmdDevelopersKeysList,
@@ -172,15 +214,15 @@ async function runDevelopers(sub, rest, flags) {
       throw new Error(
         usage(
           flags.shell,
-          `Usage: scalattice developers setup|keys\n\n${HELP}`,
-          'Usage: developers setup|keys list|create|roll|revoke'
+          `Usage: scalattice developers keys list|create|roll|revoke\n\n${HELP}`,
+          'Usage: developers keys list|create|roll|revoke'
         )
       );
   }
 }
 
 async function runAccount(sub, rest, flags) {
-  switch (sub) {
+  switch (topicOf(sub)) {
     case 'keys':
       await runKeysGroup(rest[0], rest, flags, {
         list: cmdAccountKeysList,
@@ -202,10 +244,17 @@ async function runAccount(sub, rest, flags) {
 }
 
 async function runProvider(sub, rest, flags) {
-  switch (sub) {
-    case 'setup':
-      await cmdProviderSetup(flags);
-      break;
+  if (sub === 'setup') {
+    throw new Error(
+      usage(
+        flags.shell,
+        'No setup step. Use: scalattice login, then provider machines create',
+        'No setup step. Use: login, then provider machines create'
+      )
+    );
+  }
+  await withProviderWorkspace();
+  switch (topicOf(sub)) {
     case 'keys':
       throw new Error(
         usage(
@@ -252,8 +301,8 @@ async function runProvider(sub, rest, flags) {
       throw new Error(
         usage(
           flags.shell,
-          `Usage: scalattice provider setup|machines|earnings|pause|resume|schedule|reconnect\n\n${HELP}`,
-          'Usage: provider setup|machines|earnings|pause|resume|schedule|reconnect'
+          `Usage: scalattice provider machines|earnings|pause|resume|schedule|reconnect\n\n${HELP}`,
+          'Usage: provider machines|earnings|pause|resume|schedule|reconnect'
         )
       );
   }
@@ -262,7 +311,8 @@ async function runProvider(sub, rest, flags) {
 async function dispatch(argv, { shell = false } = {}) {
   const { flags, positionals } = parseArgs(argv);
   flags.shell = shell;
-  const [cmd, sub, ...rest] = positionals;
+  const [rawCmd, sub, ...rest] = positionals;
+  const cmd = CMD_ALIAS[rawCmd] || rawCmd;
 
   if (!cmd || flags.help || cmd === 'help') {
     print((shell ? SHELL_HELP : HELP).trim());
@@ -282,7 +332,6 @@ async function dispatch(argv, { shell = false } = {}) {
     case 'keys':
       throw new Error(KEYS_MOVED);
     case 'developers':
-    case 'developer':
       await runDevelopers(sub, rest, flags);
       break;
     case 'account':
