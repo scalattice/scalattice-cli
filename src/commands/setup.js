@@ -19,6 +19,6 @@ export async function cmdSetup(args) {
   print('');
   print(`Signed in as ${cfg.email || 'session'}.`);
   print('This CLI stores the session only. For the OpenAI SDK:');
-  print('  scalattice keys create');
+  print('  scalattice developers keys create');
   print('Then: scalattice credits');
 }

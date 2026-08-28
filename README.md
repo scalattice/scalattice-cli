@@ -42,7 +42,7 @@ scalattice> exit
 `login` stores a session only. For the OpenAI SDK, create a key and export it:
 
 ```bash
-scalattice keys create
+scalattice developers keys create
 eval "$(scalattice init)"   # after OPENAI_API_KEY is in the env
 ```
 
@@ -62,9 +62,9 @@ print(client.models.list())
 | --- | --- |
 | `slt_mgmt_…` | Account management: credits, inference-key CRUD, fleet |
 | `slt_…` | Inference only (chat/completions via `api.*`) |
-| `slt_provider_…` | Machine agent tokens (not for this CLI) |
+| `slt_provider_…` | Machine agent token (`provider machines create` / `roll`; goes on the GPU host) |
 
-Create management keys on [Account](https://scalattice.cloud/account) or `provider keys create` if you need a long-lived secret for MCP. The CLI itself uses your session.
+Create management keys on [Account](https://scalattice.cloud/account) or `account keys create` if you need a long-lived secret for MCP. The CLI itself uses your session.
 
 ## Commands
 
@@ -75,15 +75,20 @@ Inside the prompt, drop the `scalattice` prefix. From a normal terminal, keep it
 | `scalattice` | Interactive prompt (`setup`, `whoami`, …) |
 | `setup` | Login and set developer workspace |
 | `login` / `logout` | Session only (what `config.json` stores) |
-| `keys list` / `keys create` | Inference API keys (prints secret once; not stored) |
+| `developers setup` | Login and set developer workspace |
+| `developers keys list|create|roll|revoke` | Inference API keys (prints secret once; not stored) |
+| `account keys list|create|roll|revoke` | Account management keys (prints secret once; not stored) |
 | `init` | Print OpenAI env exports (needs `OPENAI_API_KEY` in the env) |
 | `credits` | Wallet + model grants |
 | `whoami` | Show session / account |
 | `provider setup` | Login and set provider workspace |
-| `provider machines` / `earnings` | Fleet status and earnings |
+| `provider machines` | List fleet (id, status, token last four) |
+| `provider machines create` | Add a machine (prints `slt_provider_…` once) |
+| `provider machines roll` | New token for an existing machine (prints once) |
+| `provider machines revoke` | Remove a never-connected machine |
+| `provider earnings` | Fleet earnings |
 | `provider pause` / `resume` | Pause or resume all machines |
 | `provider schedule` | Patch one machine’s schedule |
-| `provider keys …` | List / create / roll / revoke management keys (prints secret once) |
 | `mcp` | MCP stdio server (run as `scalattice mcp`, not inside the prompt) |
 
 Config: `~/.config/scalattice/config.json` (mode `0600`) — session + email only. Keys are never written there.
@@ -94,6 +99,7 @@ Env overrides: `SCALATTICE_CLOUD_URL`, `SCALATTICE_API_URL`, `SCALATTICE_API_KEY
 
 ```bash
 scalattice provider setup
+scalattice provider machines create
 scalattice provider machines
 scalattice provider pause   # or resume
 ```

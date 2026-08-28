@@ -108,7 +108,7 @@ async function callTool(name, args = {}) {
           : 'Run `scalattice login` (or set SCALATTICE_MGMT_KEY for MCP).',
         cfg.apiKey
           ? `export OPENAI_BASE_URL=${cfg.apiUrl}`
-          : 'Run `scalattice keys create` then export OPENAI_API_KEY.',
+          : 'Run `scalattice developers keys create` then export OPENAI_API_KEY.',
       ].join(' '),
     };
   }
