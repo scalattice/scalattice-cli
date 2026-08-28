@@ -1,10 +1,10 @@
 import { cloudFetch, mgmtFetch } from '../api.js';
 import { loadConfig } from '../config.js';
 import { print } from '../io.js';
-import { requireMgmt } from './mgmt.js';
+import { requireCloudAuth } from './mgmt.js';
 
 export async function cmdCredits() {
-  const cfg = requireMgmt(loadConfig());
+  const cfg = requireCloudAuth(loadConfig());
   const data = await mgmtFetch(cfg, '/api/v1/developers/billing');
   if (data.unlimitedCredits) {
     print('Wallet: unlimited (admin)');
@@ -38,7 +38,11 @@ export async function cmdCredits() {
 
 export async function cmdInit() {
   const cfg = loadConfig();
-  if (!cfg.apiKey) throw new Error('No inference API key stored. Run: scalattice setup');
+  if (!cfg.apiKey) {
+    throw new Error(
+      'No inference API key in the environment. Run: scalattice keys create\nThen: export OPENAI_API_KEY=slt_…'
+    );
+  }
   print(`export OPENAI_BASE_URL=${cfg.apiUrl}`);
   print(`export OPENAI_API_KEY=${cfg.apiKey}`);
   print('# Optional: SCALATTICE_API_KEY is also accepted by this CLI');
@@ -50,8 +54,6 @@ export async function cmdWhoami() {
   print(`API:     ${cfg.apiUrl}`);
   print(`Email:   ${cfg.email || '(not signed in)'}`);
   print(`Session: ${cfg.sessionToken ? 'yes' : 'no'}`);
-  print(`Mgmt key: ${cfg.mgmtKey ? `...${cfg.mgmtKey.slice(-4)}` : '(none)'}`);
-  print(`API key:  ${cfg.apiKey ? `...${cfg.apiKey.slice(-4)}` : '(none)'}`);
   if (cfg.sessionToken) {
     try {
       const me = await cloudFetch(cfg, '/api/v1/account/me', { token: cfg.sessionToken });

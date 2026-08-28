@@ -2,8 +2,8 @@
  * Minimal MCP server over stdio (JSON-RPC 2.0).
  * Lets Claude Desktop / Cursor call Scalattice tools without a browser.
  *
- * Inference catalog tools use the developer API key (`slt_`).
- * Credits + fleet tools use the account management key (`slt_mgmt_`).
+ * Credits + fleet use the CLI session, or SCALATTICE_MGMT_KEY in the environment.
+ * Inference catalog tools use SCALATTICE_API_KEY / OPENAI_API_KEY.
  */
 import { apiFetch, mgmtFetch } from '../api.js';
 import { loadConfig } from '../config.js';
@@ -27,11 +27,11 @@ function listTools(cfg) {
     {
       name: 'scalattice_env',
       description:
-        'Return configured Scalattice endpoints and whether inference / account management keys are stored (values redacted).',
+        'Return configured Scalattice endpoints and whether a session or env keys are present (values redacted).',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     },
   ];
-  if (cfg.mgmtKey) {
+  if (cfg.sessionToken || cfg.mgmtKey) {
     tools.push(
       {
         name: 'scalattice_credits',
@@ -99,17 +99,16 @@ async function callTool(name, args = {}) {
     return {
       cloud_url: cfg.cloudUrl,
       openai_base_url: cfg.apiUrl,
+      session: Boolean(cfg.sessionToken),
       api_key_configured: Boolean(cfg.apiKey),
-      api_key_suffix: cfg.apiKey ? cfg.apiKey.slice(-4) : null,
       mgmt_key_configured: Boolean(cfg.mgmtKey),
-      mgmt_key_suffix: cfg.mgmtKey ? cfg.mgmtKey.slice(-4) : null,
       hint: [
-        cfg.mgmtKey
-          ? 'Account management key configured (credits + fleet tools).'
-          : 'Run `scalattice setup` for an account management key.',
+        cfg.sessionToken || cfg.mgmtKey
+          ? 'Session or SCALATTICE_MGMT_KEY is set (credits + fleet tools).'
+          : 'Run `scalattice login` (or set SCALATTICE_MGMT_KEY for MCP).',
         cfg.apiKey
-          ? `export OPENAI_BASE_URL=${cfg.apiUrl}\nexport OPENAI_API_KEY=<stored locally>`
-          : 'Run `scalattice setup` for an inference API key.',
+          ? `export OPENAI_BASE_URL=${cfg.apiUrl}`
+          : 'Run `scalattice keys create` then export OPENAI_API_KEY.',
       ].join(' '),
     };
   }

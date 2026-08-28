@@ -1,7 +1,7 @@
 {
   "name": "scalattice-cli",
   "version": "0.2.4",
-  "description": "Scalattice CLI - developer API keys, provider fleet control, OpenAI-compatible env, credits, MCP.",
+  "description": "Scalattice CLI - session login, credits, fleet, OpenAI-compatible keys, MCP.",
   "type": "module",
   "bin": {
     "scalattice": "./bin/scalattice.js"

@@ -1,5 +1,5 @@
 import { cloudFetch } from '../api.js';
-import { loadConfig, saveConfig } from '../config.js';
+import { loadConfig } from '../config.js';
 import { print, prompt } from '../io.js';
 import { cmdLogin } from './login.js';
 
@@ -8,30 +8,21 @@ export function requireSession(cfg) {
   return cfg;
 }
 
-export function requireMgmt(cfg) {
-  if (!cfg.mgmtKey) {
-    throw new Error('No account management key. Run: scalattice setup');
+export function requireCloudAuth(cfg) {
+  if (!cfg.sessionToken && !cfg.mgmtKey) {
+    throw new Error('Not signed in. Run: scalattice login');
   }
   return cfg;
 }
 
-/** Mint or reuse an account management key (session required for create). */
-export async function ensureMgmtKey(args = {}) {
+/** @deprecated use requireCloudAuth */
+export function requireMgmt(cfg) {
+  return requireCloudAuth(cfg);
+}
+
+/** Mint a management key for MCP / env. Prints once; never stored in config.json. */
+export async function cmdMgmtKeyCreate(args = {}) {
   let cfg = loadConfig();
-  if (args.paste) {
-    const pasted = String(args.paste).trim();
-    if (!pasted.startsWith('slt_mgmt_')) {
-      throw new Error('Account management key must start with slt_mgmt_');
-    }
-    saveConfig({ mgmtKey: pasted, mgmtKeyId: '', mgmtKeyName: 'pasted' });
-    print('Account management key saved locally.');
-    return loadConfig();
-  }
-
-  if (!args.newKey && cfg.mgmtKey) {
-    return cfg;
-  }
-
   if (!cfg.sessionToken || args.forceLogin) {
     cfg = await cmdLogin(args);
   }
@@ -49,12 +40,10 @@ export async function ensureMgmtKey(args = {}) {
   });
   const secret = data.secret;
   if (!secret) throw new Error('Key created but secret missing from response');
-  saveConfig({
-    mgmtKey: secret,
-    mgmtKeyId: String(data.key?.id || ''),
-    mgmtKeyName: data.key?.name || name,
-  });
-  print('Account management key created and saved locally (shown once):');
+  print('Account management key (shown once, not stored):');
   print(secret);
-  return loadConfig();
+  print('');
+  print('For MCP / scripts, put it in the environment:');
+  print(`  export SCALATTICE_MGMT_KEY=${secret}`);
+  return secret;
 }
