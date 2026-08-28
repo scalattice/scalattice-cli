@@ -1,11 +1,23 @@
 import readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 
+let sharedRl = null;
+
+/** Reuse the interactive prompt so nested questions do not close stdin. */
+export function setPromptInterface(rl) {
+  sharedRl = rl || null;
+}
+
 export async function prompt(question, { defaultValue = '' } = {}) {
-  const rl = readline.createInterface({ input, output });
+  const hint = defaultValue ? ` [${defaultValue}]` : '';
+  const ask = `${question}${hint}: `;
+  if (sharedRl) {
+    const answer = (await sharedRl.question(ask)).trim();
+    return answer || defaultValue;
+  }
+  const rl = readline.createInterface({ input, output, terminal: true });
   try {
-    const hint = defaultValue ? ` [${defaultValue}]` : '';
-    const answer = (await rl.question(`${question}${hint}: `)).trim();
+    const answer = (await rl.question(ask)).trim();
     return answer || defaultValue;
   } finally {
     rl.close();

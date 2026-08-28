@@ -1,14 +1,25 @@
 import { cmdLogin, cmdLogout } from './commands/login.js';
-import { cmdKeysCreate, cmdKeysList } from './commands/keys.js';
+import {
+  cmdDevelopersSetup,
+  cmdDevelopersKeysList,
+  cmdDevelopersKeysCreate,
+  cmdDevelopersKeysRoll,
+  cmdDevelopersKeysRevoke,
+} from './commands/developers.js';
+import {
+  cmdAccountKeysList,
+  cmdAccountKeysCreate,
+  cmdAccountKeysRoll,
+  cmdAccountKeysRevoke,
+} from './commands/account.js';
 import { cmdCredits, cmdInit, cmdWhoami } from './commands/misc.js';
 import { cmdSetup } from './commands/setup.js';
 import {
   cmdProviderSetup,
-  cmdProviderKeysList,
-  cmdProviderKeysCreate,
-  cmdProviderKeysRoll,
-  cmdProviderKeysRevoke,
-  cmdProviderMachines,
+  cmdProviderMachinesList,
+  cmdProviderMachinesCreate,
+  cmdProviderMachinesRoll,
+  cmdProviderMachinesRevoke,
   cmdProviderEarnings,
   cmdProviderPause,
   cmdProviderResume,
@@ -16,7 +27,7 @@ import {
   cmdProviderReconnect,
 } from './commands/provider.js';
 import { runMcpServer } from './commands/mcp.js';
-import { print } from './io.js';
+import { print, setPromptInterface } from './io.js';
 import { configPath } from './config.js';
 import readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
@@ -31,17 +42,24 @@ Usage:
   scalattice setup [--email you@example.com] [--login]
   scalattice login [--email you@example.com]
   scalattice logout
-  scalattice keys list
-  scalattice keys create [--name NAME]
   scalattice init
   scalattice credits
   scalattice whoami
   scalattice mcp
 
+Developers (inference API keys slt_…):
+  scalattice developers setup [--email …]
+  scalattice developers keys list|create|roll|revoke
+
+Account (management keys slt_mgmt_…):
+  scalattice account keys list|create|roll|revoke
+
 Provider fleet:
   scalattice provider setup [--email …]
-  scalattice provider keys list|create|roll|revoke
   scalattice provider machines
+  scalattice provider machines create [--name NAME]
+  scalattice provider machines roll --machine ID
+  scalattice provider machines revoke --machine ID
   scalattice provider earnings
   scalattice provider pause
   scalattice provider resume
@@ -51,8 +69,8 @@ Provider fleet:
 Quick start:
   1. scalattice login
   2. scalattice credits
-  3. scalattice keys create          # prints an inference key once
-  4. eval "$(scalattice init)"       # after OPENAI_API_KEY is in the env
+  3. scalattice developers keys create   # prints an inference key once
+  4. eval "$(scalattice init)"          # after OPENAI_API_KEY is in the env
 
 Config file: ${configPath()}
 Env: SCALATTICE_CLOUD_URL, SCALATTICE_API_URL, SCALATTICE_SESSION_TOKEN,
@@ -65,15 +83,18 @@ const SHELL_HELP = `Commands:
   login [--email …]
   logout
   credits
-  keys list
-  keys create [--name NAME]
+  developers setup|keys list|create|roll|revoke
+  account keys list|create|roll|revoke
   init
-  provider setup|machines|earnings|pause|resume|keys|schedule|reconnect
+  provider setup|machines [list|create|roll|revoke]|earnings|pause|resume|schedule|reconnect
   help
   exit
 
 One-shot from any terminal: scalattice <command>
 Config: ${configPath()}`;
+
+const KEYS_MOVED =
+  'Inference keys: developers keys list|create|roll|revoke\nAccount management keys: account keys list|create|roll|revoke\nMachine tokens: provider machines create|roll|revoke';
 
 function parseLine(line) {
   const parts = String(line || '')
@@ -110,23 +131,108 @@ function parseArgs(argv) {
   return { flags, positionals };
 }
 
+async function runKeysGroup(action, rest, flags, {
+  list,
+  create,
+  roll,
+  revoke,
+  noun,
+}) {
+  const idRest = rest.slice(1);
+  if (action === 'list') await list();
+  else if (action === 'create') await create(flags);
+  else if (action === 'roll') await roll(flags, idRest);
+  else if (action === 'revoke') await revoke(flags, idRest);
+  else {
+    throw new Error(
+      usage(
+        flags.shell,
+        `Usage: scalattice ${noun} keys list|create|roll|revoke`,
+        `Usage: ${noun} keys list|create|roll|revoke`
+      )
+    );
+  }
+}
+
+async function runDevelopers(sub, rest, flags) {
+  switch (sub) {
+    case 'setup':
+      await cmdDevelopersSetup(flags);
+      break;
+    case 'keys':
+      await runKeysGroup(rest[0], rest, flags, {
+        list: cmdDevelopersKeysList,
+        create: cmdDevelopersKeysCreate,
+        roll: cmdDevelopersKeysRoll,
+        revoke: cmdDevelopersKeysRevoke,
+        noun: 'developers',
+      });
+      break;
+    default:
+      throw new Error(
+        usage(
+          flags.shell,
+          `Usage: scalattice developers setup|keys\n\n${HELP}`,
+          'Usage: developers setup|keys list|create|roll|revoke'
+        )
+      );
+  }
+}
+
+async function runAccount(sub, rest, flags) {
+  switch (sub) {
+    case 'keys':
+      await runKeysGroup(rest[0], rest, flags, {
+        list: cmdAccountKeysList,
+        create: cmdAccountKeysCreate,
+        roll: cmdAccountKeysRoll,
+        revoke: cmdAccountKeysRevoke,
+        noun: 'account',
+      });
+      break;
+    default:
+      throw new Error(
+        usage(
+          flags.shell,
+          'Usage: scalattice account keys list|create|roll|revoke',
+          'Usage: account keys list|create|roll|revoke'
+        )
+      );
+  }
+}
+
 async function runProvider(sub, rest, flags) {
   switch (sub) {
     case 'setup':
       await cmdProviderSetup(flags);
       break;
-    case 'keys': {
+    case 'keys':
+      throw new Error(
+        usage(
+          flags.shell,
+          'Machine tokens belong to machines. Use: scalattice provider machines create|roll|revoke',
+          'Machine tokens belong to machines. Use: provider machines create|roll|revoke'
+        )
+      );
+    case 'machines': {
       const action = rest[0];
-      if (action === 'list') await cmdProviderKeysList();
-      else if (action === 'create') await cmdProviderKeysCreate(flags);
-      else if (action === 'roll') await cmdProviderKeysRoll(flags);
-      else if (action === 'revoke') await cmdProviderKeysRevoke(flags);
-      else throw new Error(usage(flags.shell, 'Usage: scalattice provider keys list|create|roll|revoke', 'Usage: provider keys list|create|roll|revoke'));
+      const idRest = rest.slice(1);
+      if (!action || action === 'list') await cmdProviderMachinesList();
+      else if (action === 'create') await cmdProviderMachinesCreate(flags);
+      else if (action === 'roll') await cmdProviderMachinesRoll(flags, idRest);
+      else if (action === 'revoke') await cmdProviderMachinesRevoke(flags, idRest);
+      else if (action === 'reconnect') await cmdProviderReconnect(flags, idRest);
+      else {
+        throw new Error(
+          usage(
+            flags.shell,
+            'Usage: scalattice provider machines [list|create|roll|revoke]',
+            'Usage: provider machines [list|create|roll|revoke]'
+          )
+        );
+      }
       break;
     }
-    case 'machines':
-      await cmdProviderMachines();
-      break;
     case 'earnings':
       await cmdProviderEarnings();
       break;
@@ -140,14 +246,14 @@ async function runProvider(sub, rest, flags) {
       await cmdProviderSchedule(flags);
       break;
     case 'reconnect':
-      await cmdProviderReconnect(flags);
+      await cmdProviderReconnect(flags, rest);
       break;
     default:
       throw new Error(
         usage(
           flags.shell,
-          `Usage: scalattice provider setup|keys|machines|earnings|pause|resume|schedule|reconnect\n\n${HELP}`,
-          'Usage: provider setup|keys|machines|earnings|pause|resume|schedule|reconnect'
+          `Usage: scalattice provider setup|machines|earnings|pause|resume|schedule|reconnect\n\n${HELP}`,
+          'Usage: provider setup|machines|earnings|pause|resume|schedule|reconnect'
         )
       );
   }
@@ -174,9 +280,13 @@ async function dispatch(argv, { shell = false } = {}) {
       await cmdLogout();
       break;
     case 'keys':
-      if (sub === 'list') await cmdKeysList();
-      else if (sub === 'create') await cmdKeysCreate(flags);
-      else throw new Error(usage(shell, 'Usage: scalattice keys list|create', 'Usage: keys list|create'));
+      throw new Error(KEYS_MOVED);
+    case 'developers':
+    case 'developer':
+      await runDevelopers(sub, rest, flags);
+      break;
+    case 'account':
+      await runAccount(sub, rest, flags);
       break;
     case 'provider':
       await runProvider(sub, rest, flags);
@@ -210,6 +320,7 @@ async function runPrompt() {
   print('');
   print('Type a command (help, exit).');
   const rl = readline.createInterface({ input, output, terminal: true });
+  setPromptInterface(rl);
   try {
     while (true) {
       const line = await rl.question('scalattice> ');
@@ -227,6 +338,7 @@ async function runPrompt() {
       }
     }
   } finally {
+    setPromptInterface(null);
     rl.close();
   }
 }
