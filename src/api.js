@@ -75,7 +75,7 @@ export async function apiFetch(cfg, path, { method = 'GET', body, apiKey } = {})
   const base = cfg.apiUrl.replace(/\/+$/, '');
   const url = `${base}${path.startsWith('/') ? path : `/${path}`}`;
   const key = apiKey || cfg.apiKey;
-  if (!key) throw new Error('No API key. Run: scalattice setup');
+  if (!key) throw new Error('No API key. Run: scalattice developers keys create');
 
   const res = await fetch(url, {
     method,

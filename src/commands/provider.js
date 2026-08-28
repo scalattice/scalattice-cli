@@ -1,22 +1,7 @@
 import { cloudFetch, mgmtFetch } from '../api.js';
 import { loadConfig } from '../config.js';
 import { print, prompt } from '../io.js';
-import { cmdLogin, ensureProviderAudience } from './login.js';
 import { requireCloudAuth, requireSession } from './mgmt.js';
-
-export async function cmdProviderSetup(args) {
-  let cfg = loadConfig();
-  if (!cfg.sessionToken || args.forceLogin) {
-    cfg = await cmdLogin(args);
-  }
-  requireSession(cfg);
-  await ensureProviderAudience(cfg);
-  print('Signed in. Fleet commands use this session.');
-  print('Try: scalattice provider machines create');
-  print('     scalattice provider machines');
-  print('     scalattice provider earnings');
-  return cfg;
-}
 
 function machineId(args, rest = []) {
   return String(args.machine || args.id || rest[0] || '').trim();
