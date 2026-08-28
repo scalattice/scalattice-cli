@@ -1,6 +1,6 @@
 {
   "name": "scalattice-cli",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "description": "Scalattice CLI - session login, credits, fleet, OpenAI-compatible keys, MCP.",
   "type": "module",
   "bin": {
