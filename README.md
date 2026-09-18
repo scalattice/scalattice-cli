@@ -7,7 +7,9 @@
 [![npm](https://img.shields.io/npm/v/scalattice-cli.svg)](https://www.npmjs.com/package/scalattice-cli)
 [![license](https://img.shields.io/npm/l/scalattice-cli.svg)](./LICENSE)
 
-Sign in from a terminal, land in an interactive CLI, mint an account management key (`slt_mgmt_…`) for automation, create an inference API key (`slt_…`) for OpenAI-compatible SDKs, check credits, and manage a provider fleet. Optional MCP mode for AI coding agents.
+Sign in from a terminal, land in an interactive CLI, mint an account management key (`slt_mgmt_…`) for automation, create an inference API key (`slt_…`) for OpenAI-compatible SDKs, check credits, and manage a provider fleet. **Bracket** is the coding harness in this same binary (`scalattice bracket`). Optional MCP mode for other editors.
+
+**Product:** [scalattice.com/cli](https://scalattice.com/cli/) · **npm:** [scalattice-cli](https://www.npmjs.com/package/scalattice-cli) · **Cloud docs:** [developers#cli](https://scalattice.cloud/docs/developers#cli) · [providers#fleet-api](https://scalattice.cloud/docs/providers#fleet-api) · **Installer:** [scalattice.cloud/install/cli](https://scalattice.cloud/install/cli)
 
 **Product:** [scalattice.com/cli](https://scalattice.com/cli/) · **npm:** [scalattice-cli](https://www.npmjs.com/package/scalattice-cli) · **Cloud docs:** [developers#cli](https://scalattice.cloud/docs/developers#cli) · [providers#fleet-api](https://scalattice.cloud/docs/providers#fleet-api) · **Installer:** [scalattice.cloud/install/cli](https://scalattice.cloud/install/cli)
 
@@ -87,12 +89,31 @@ Inside the prompt, drop the `scalattice` prefix. From a normal terminal, keep it
 | `provider pause` / `resume` | Pause or resume all machines |
 | `provider schedule` | Patch one machine’s schedule |
 | `mcp` | MCP stdio server (run as `scalattice mcp`, not inside the prompt) |
+| `bracket` | Coding harness: read/edit files and run commands in this directory |
 
 `developer`/`developers`, `provider`/`providers`, `machine`/`machines`, and `key`/`keys` are aliases.
 
-Config: `~/.config/scalattice/config.json` (mode `0600`) — session + email only. Keys are never written there.
+Config: `~/.config/scalattice/config.json` (mode `0600`) — session + email only. Keys are never written there. Bracket may store its own inference key at `~/.config/scalattice/bracket.key` (also `0600`).
 
-Env overrides: `SCALATTICE_CLOUD_URL`, `SCALATTICE_API_URL`, `SCALATTICE_API_KEY`, `SCALATTICE_MGMT_KEY`, `SCALATTICE_SESSION_TOKEN`.
+Env overrides: `SCALATTICE_CLOUD_URL`, `SCALATTICE_API_URL`, `SCALATTICE_API_KEY`, `SCALATTICE_MGMT_KEY`, `SCALATTICE_SESSION_TOKEN`, `SCALATTICE_BRACKET_MODEL`.
+
+## Bracket
+
+Bracket is the coding harness in this CLI. It is **not** [`scalattice-agent`](https://github.com/scalattice/scalattice-agent) (the GPU provider daemon). `scalattice bracket` takes over the terminal (branded TUI). `scalattice` with no args is still the account prompt.
+
+```bash
+scalattice login
+scalattice bracket
+scalattice bracket "fix the failing tests"
+scalattice bracket --print "what does this repo do?"
+scalattice bracket --yolo "apply the refactor"
+```
+
+Login is enough: Bracket will mint a dedicated inference key named `CLI bracket` and keep it in `~/.config/scalattice/bracket.key`. Or export `OPENAI_API_KEY` / `SCALATTICE_API_KEY`. Default model is `qwen-3-coder-30b-a3b` (override with `--model` or `SCALATTICE_BRACKET_MODEL`).
+
+Inside the prompt: type in the boxed input. `/help` `/exit` `/clear` `/compact` `/model` `/yolo` `/credits` `/whoami`. Shell and file writes ask before running unless you pass `--yolo` (also `--auto` / `--dangerously-skip-permissions`).
+
+`--print` is one-shot (CI / scripts) and does not open the TUI. Writes and shell still need `--yolo` when stdin is not a TTY.
 
 ## Provider fleet
 
@@ -107,7 +128,7 @@ See [Fleet API docs](https://scalattice.cloud/docs/providers#fleet-api).
 
 ## MCP (optional)
 
-MCP is **not** a second install. After `login`, leave the prompt and run `scalattice mcp`. For a headless agent without a session, set `SCALATTICE_MGMT_KEY` in that environment.
+MCP is **not** a second install. After `login`, leave the prompt and run `scalattice mcp`. For a headless process without a session, set `SCALATTICE_MGMT_KEY` in that environment.
 
 ```json
 {

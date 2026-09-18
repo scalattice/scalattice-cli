@@ -1,7 +1,7 @@
 {
   "name": "scalattice-cli",
-  "version": "0.2.8",
-  "description": "Scalattice CLI - session login, credits, fleet, OpenAI-compatible keys, MCP.",
+  "version": "0.3.0",
+  "description": "Scalattice CLI - session login, credits, fleet, Bracket coding harness, MCP.",
   "type": "module",
   "bin": {
     "scalattice": "./bin/scalattice.js"
@@ -17,7 +17,8 @@
   ],
   "scripts": {
     "start": "node ./bin/scalattice.js",
-    "prepublishOnly": "node ./bin/scalattice.js --help >/dev/null"
+    "test": "node --test src/bracket/*.test.js",
+    "prepublishOnly": "node ./bin/scalattice.js --help >/dev/null && node --test src/bracket/*.test.js"
   },
   "license": "MIT",
   "author": "Scalattice",
@@ -35,6 +36,7 @@
     "inference",
     "cli",
     "mcp",
+    "bracket",
     "llm",
     "api-key",
     "provider",

@@ -1,6 +1,7 @@
 import { cloudFetch } from '../api.js';
 import { loadConfig, saveSession, clearSecrets } from '../config.js';
 import { print, prompt } from '../io.js';
+import { sessionRefreshHint } from '../session.js';
 
 export async function cmdLogin(args) {
   const cfg = loadConfig();
@@ -9,11 +10,18 @@ export async function cmdLogin(args) {
   email = String(email).trim().toLowerCase();
   if (!email.includes('@')) throw new Error('Valid email required');
 
-  await cloudFetch(cfg, '/api/v1/auth/request-code', {
-    method: 'POST',
-    body: { email },
-    cli: true,
-  });
+  try {
+    await cloudFetch(cfg, '/api/v1/auth/request-code', {
+      method: 'POST',
+      body: { email },
+      cli: true,
+    });
+  } catch (err) {
+    if (/open this page in a browser/i.test(err?.message || '')) {
+      throw new Error(sessionRefreshHint(cfg));
+    }
+    throw err;
+  }
   print(`Magic code sent to ${email}. Check your inbox.`);
   const code = await prompt('Paste the code');
   if (!code) throw new Error('Code required');
