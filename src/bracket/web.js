@@ -2,7 +2,7 @@ import dns from 'node:dns/promises';
 import net from 'node:net';
 
 const MAX_BYTES = 512 * 1024;
-const MAX_CHARS = 80_000;
+const MAX_CHARS = 8_000;
 const FETCH_MS = 20_000;
 const MAX_REDIRECTS = 5;
 const UA = 'ScalatticeBracket/0.3 (https://scalattice.com/cli)';

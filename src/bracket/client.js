@@ -11,6 +11,37 @@ export function inferenceUrl(apiUrl, path) {
   return `${base}/${suffix}`;
 }
 
+function openaiMessages(messages) {
+  return (messages || []).map((m) => {
+    if (!m || typeof m !== 'object') return m;
+    if (m.role === 'assistant' && m.tool_calls?.length) {
+      return {
+        role: 'assistant',
+        content: m.content ?? null,
+        tool_calls: m.tool_calls.map((tc, i) => ({
+          id: String(tc.id || `call_${i + 1}`),
+          type: 'function',
+          function: {
+            name: String(tc.function?.name || ''),
+            arguments:
+              typeof tc.function?.arguments === 'string'
+                ? tc.function.arguments
+                : JSON.stringify(tc.function?.arguments || {}),
+          },
+        })),
+      };
+    }
+    if (m.role === 'tool' || m.role === 'function') {
+      return {
+        role: 'tool',
+        tool_call_id: String(m.tool_call_id || m.id || 'call_1'),
+        content: String(m.content ?? ''),
+      };
+    }
+    return m;
+  });
+}
+
 function emitDelta(onDelta, part) {
   if (!onDelta || !part?.text) return;
   onDelta(part);
@@ -39,8 +70,12 @@ function ingestToolCalls(toolAcc, tcs) {
     };
     if (tc.id) cur.id = tc.id;
     if (tc.function?.name) cur.function.name = mergeToolField(cur.function.name, tc.function.name);
-    if (tc.function?.arguments) {
-      cur.function.arguments = mergeToolField(cur.function.arguments, tc.function.arguments);
+    if (tc.function?.arguments != null && tc.function.arguments !== '') {
+      const piece =
+        typeof tc.function.arguments === 'string'
+          ? tc.function.arguments
+          : JSON.stringify(tc.function.arguments);
+      cur.function.arguments = mergeToolField(cur.function.arguments, piece);
     }
     toolAcc.set(idx, cur);
   }
@@ -58,6 +93,7 @@ async function readSse(res, { onDelta, signal } = {}) {
   let sawContentDelta = false;
   let sawReasoningDelta = false;
   let lastMessage = null;
+  let finishReason = null;
 
   const takeParts = (parts) => {
     for (const part of parts) {
@@ -93,6 +129,7 @@ async function readSse(res, { onDelta, signal } = {}) {
       takeParts(splitter.push(delta.content));
     }
     if (delta.tool_calls?.length) ingestToolCalls(toolAcc, delta.tool_calls);
+    if (choice.finish_reason) finishReason = choice.finish_reason;
   };
 
   while (true) {
@@ -136,6 +173,7 @@ async function readSse(res, { onDelta, signal } = {}) {
   const msg = { role: 'assistant', content: content || null };
   if (tool_calls.length) msg.tool_calls = tool_calls;
   if (reasoning) msg.reasoning_content = reasoning;
+  if (finishReason) msg.finish_reason = finishReason;
   return msg;
 }
 
@@ -149,7 +187,7 @@ export async function chatCompletion({
   thinking = true,
   settings,
   temperature = 0.2,
-  max_tokens = 8192,
+  max_tokens = 1024,
   signal,
   onDelta,
 } = {}) {
@@ -157,12 +195,12 @@ export async function chatCompletion({
   const useThink = settings?.thinking !== undefined ? settings.thinking !== false : thinking !== false;
   const body = {
     model,
-    messages: applyThinkingTag(messages, useThink),
+    messages: openaiMessages(applyThinkingTag(messages, useThink)),
     temperature,
     max_tokens,
     stream: useStream,
   };
-  if (tools?.length && !useStream) {
+  if (tools?.length) {
     body.tools = tools;
     body.tool_choice = 'auto';
   }
@@ -214,6 +252,8 @@ export async function chatCompletion({
   }
   const out = { ...msg, content: content || msg.content || null };
   if (reasoning) out.reasoning_content = reasoning;
+  const fr = json.choices?.[0]?.finish_reason;
+  if (fr) out.finish_reason = fr;
   return out;
 }
 

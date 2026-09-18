@@ -6,8 +6,10 @@ import { globToRegExp, looksBinary, resolveWorkspacePath, walkFiles } from './pa
 import { webFetchTool, webSearchTool } from './web.js';
 
 const MAX_READ_BYTES = 512 * 1024;
-const MAX_TOOL_CHARS = 80_000;
-const MAX_GREP_HITS = 80;
+const MAX_TOOL_CHARS = 4_000;
+const MAX_GREP_HITS = 40;
+const DEFAULT_READ_LINES = 160;
+const MAX_GLOB_HITS = 80;
 
 function fn(name, description, properties, required = []) {
   return {
@@ -37,7 +39,7 @@ export const TOOL_DEFS = [
   ),
   fn(
     'read_file',
-    'Read a text file. Use offset/limit for large files (1-based line numbers).',
+    'Read a slice of a text file. Default 160 lines. Use offset/limit; do not read a whole large file.',
     {
       path: { type: 'string', description: 'Path relative to the workspace' },
       offset: { type: 'integer', description: 'First line to return (1-based)' },
@@ -200,7 +202,7 @@ function readFileTool(args, cwd) {
   if (looksBinary(buf)) throw new Error('Binary file; not shown.');
   const lines = buf.toString('utf8').split('\n');
   const offset = Math.max(1, Number(args.offset) || 1);
-  const limit = Math.max(1, Number(args.limit) || lines.length);
+  const limit = Number(args.limit) > 0 ? Math.max(1, Number(args.limit)) : DEFAULT_READ_LINES;
   const slice = lines.slice(offset - 1, offset - 1 + limit);
   const numbered = slice.map((line, i) => `${String(offset + i).padStart(6)}|${line}`).join('\n');
   return clip(`${args.path} (${lines.length} lines)\n${numbered}`);
@@ -230,7 +232,7 @@ function globTool(args, cwd) {
   for (const abs of files) {
     const rel = path.relative(cwd, abs).replaceAll('\\', '/');
     if (re.test(rel) || re.test(path.basename(rel))) hits.push(rel);
-    if (hits.length >= 200) break;
+    if (hits.length >= MAX_GLOB_HITS) break;
   }
   return hits.length ? hits.join('\n') : '(no matches)';
 }
@@ -301,38 +303,50 @@ export function createToolRunner({ cwd, permissions, todos }) {
       const ok = await permissions.approve(name, summary);
       if (!ok) return `Denied by user: ${name}`;
 
+      let out;
       switch (name) {
         case 'bash':
           if (!args.command) throw new Error('command is required');
-          return await runBash(args, cwd);
+          out = await runBash(args, cwd);
+          break;
         case 'read_file':
-          return readFileTool(args, cwd);
+          out = readFileTool(args, cwd);
+          break;
         case 'write_file':
-          return writeFileTool(args, cwd);
+          out = writeFileTool(args, cwd);
+          break;
         case 'edit_file':
-          return editFileTool(args, cwd);
+          out = editFileTool(args, cwd);
+          break;
         case 'glob':
-          return globTool(args, cwd);
+          out = globTool(args, cwd);
+          break;
         case 'grep':
-          return grepTool(args, cwd);
+          out = grepTool(args, cwd);
+          break;
         case 'list_dir':
-          return listDirTool(args, cwd);
+          out = listDirTool(args, cwd);
+          break;
         case 'todo_write': {
           const items = Array.isArray(args.items) ? args.items : [];
           todos.splice(0, todos.length, ...items);
-          return items
-            .map((t) => `- [${t.status || 'pending'}] ${t.content}`)
-            .join('\n') || '(empty list)';
+          out =
+            items.map((t) => `- [${t.status || 'pending'}] ${t.content}`).join('\n') ||
+            '(empty list)';
+          break;
         }
         case 'web_search':
           if (!args.query) throw new Error('query is required');
-          return await webSearchTool(args);
+          out = await webSearchTool(args);
+          break;
         case 'web_fetch':
           if (!args.url) throw new Error('url is required');
-          return await webFetchTool(args);
+          out = await webFetchTool(args);
+          break;
         default:
-          return `Unknown tool: ${name}`;
+          out = `Unknown tool: ${name}`;
       }
+      return clip(out);
     } catch (err) {
       return `Error: ${err?.message || String(err)}`;
     }
@@ -351,24 +365,15 @@ export function toolSummary(call) {
 }
 
 export function toolsPrompt() {
-  const listed = TOOL_DEFS.map((t) => ({
-    type: 'function',
-    function: {
-      name: t.function.name,
-      description: t.function.description,
-      parameters: t.function.parameters,
-    },
-  }));
+  const listed = TOOL_DEFS.map((t) => `${t.function.name}: ${String(t.function.description || '').split('.')[0]}`);
   return [
-    'You can call tools. The API does not run OpenAI native tool_calls while streaming, so you MUST emit XML blocks. Bracket executes them.',
-    'When you need a tool, output one or more blocks and then stop. No markdown fences around the blocks. Do not write a tutorial about the tools.',
-    '<tool_call>',
-    '{"name":"TOOL_NAME","arguments":{"argument_name":"value"}}',
-    '</tool_call>',
-    'Prefer tools over guessing. Use web_search and web_fetch for live pages and anything outside this workspace. bash can also reach the network if you must.',
-    'If you do not need a tool, answer the user in Markdown with no tool_call tags.',
-    `Available tools (JSON):\n${JSON.stringify(listed)}`,
-  ].join('\n');
+    'You have OpenAI function tools on this request (including web_search and web_fetch). Call them with tool_calls (function name + JSON arguments). Do not print a tutorial about the tools.',
+    'Prefer tools over guessing. Use glob/list_dir/grep, then read_file in slices. Use web_search and web_fetch for live pages.',
+    'If a template cannot emit native tool_calls, a <tool_call>{"name":"TOOL_NAME","arguments":{}}</tool_call> block is also accepted.',
+    listed.length ? `Tools: ${listed.map((row) => row.split(':')[0]).join(', ')}.` : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 
 export function toolsBlock() {
@@ -379,8 +384,7 @@ export function toolsBlock() {
   });
   const w = Math.max(...rows.map((r) => r[0].length));
   return [
-    'The model can call these tools while it works.',
-    'You can run some yourself: /bash /read /ls /grep /glob /search /fetch',
+    'The model can call these tools while it works. Ask in the chat.',
     '',
     ...rows.map(([name, desc]) => `${name.padEnd(w)}  ${desc}`),
   ].join('\n');

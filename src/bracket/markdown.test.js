@@ -115,4 +115,7 @@ test('system prompt includes Scalattice knowledge and markdown instruction', () 
   assert.match(prompt, /Robottik Ltd/);
   assert.match(prompt, /Write replies in Markdown/);
   assert.match(prompt, /Do not reverse-engineer the company/);
+  assert.match(prompt, /read_file with offset\/limit/);
+  assert.doesNotMatch(prompt, /Workspace files \(partial\)/);
+  assert.doesNotMatch(prompt, /Recent commits/);
 });

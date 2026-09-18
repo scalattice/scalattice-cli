@@ -5,6 +5,7 @@ import { stdin as input, stdout as output } from 'node:process';
 import { logoBraille, logoCellWidth } from './logo.js';
 import { markdownToAnsi, stripAnsi as stripMd } from './markdown.js';
 import { contentText } from './session.js';
+import { toolSummary } from './tools.js';
 import {
   ACCENT,
   BOLD,
@@ -344,6 +345,7 @@ export function createTui(opts = {}) {
   let scrollTop = 2;
   let alive = false;
   let busySince = 0;
+  let cancelWork = null;
   let tick = null;
   let records = [];
   let partial = '';
@@ -712,6 +714,10 @@ export function createTui(opts = {}) {
   function onData(chunk) {
     const s = String(chunk);
     if (s === '\x03') {
+      if (busySince && cancelWork) {
+        cancelWork();
+        return;
+      }
       if (waiter) {
         const err = Object.assign(new Error('Interrupted'), { interrupted: true });
         finishWait((w) => w.reject(err));
@@ -844,13 +850,15 @@ export function createTui(opts = {}) {
       paintTranscript();
       paintInput();
     },
-    beginWork() {
+    beginWork(onCancel) {
       busySince = Date.now();
+      cancelWork = typeof onCancel === 'function' ? onCancel : null;
       if (tick) clearInterval(tick);
       tick = setInterval(() => paintInput(), 100);
       paintInput();
     },
     endWork() {
+      cancelWork = null;
       stopWork();
       if (paintSoon) {
         clearTimeout(paintSoon);
@@ -894,7 +902,7 @@ export function createTui(opts = {}) {
         }
         records.push({
           kind: 'md',
-          lead: `${paint(ACCENT, `${BOLD}[ ]`)}  `,
+          lead: '',
           text: '',
         });
         wrotePrefix = true;
@@ -921,9 +929,11 @@ export function createTui(opts = {}) {
       if (viewOffset === 0) paintTranscript();
     },
     replaceAssistant(text) {
+      const next = String(text || '');
       for (let i = records.length - 1; i >= 0; i -= 1) {
         if (records[i]?.kind === 'md') {
-          records[i].text = String(text || '');
+          if (next.trim()) records[i].text = next;
+          else records.splice(i, 1);
           break;
         }
       }
@@ -943,10 +953,17 @@ export function createTui(opts = {}) {
           if (text) this.user(text);
         } else if (m?.role === 'assistant') {
           const text = contentText(m);
-          if (!text) continue;
-          this.startAssistant();
-          this.writeDelta({ type: 'content', text });
-          this.endAssistant();
+          if (text) {
+            this.startAssistant();
+            this.writeDelta({ type: 'content', text });
+            this.endAssistant();
+          }
+          for (const call of m.tool_calls || []) {
+            this.tool(toolSummary(call));
+          }
+        } else if (m?.role === 'tool') {
+          const text = contentText(m).split('\n')[0];
+          if (text) this.note(text.length > 120 ? `${text.slice(0, 117)}…` : text);
         }
       }
     },

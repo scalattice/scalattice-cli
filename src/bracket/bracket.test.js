@@ -33,6 +33,27 @@ test('glob **/*.js', () => {
   assert.ok(!re.test('src/foo.ts'));
 });
 
+test('read_file defaults to a slice not the whole file', async () => {
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { createToolRunner } = await import('./tools.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bracket-read-'));
+  fs.writeFileSync(
+    path.join(dir, 'big.txt'),
+    Array.from({ length: 400 }, (_, i) => `line ${i + 1}`).join('\n')
+  );
+  const run = createToolRunner({
+    cwd: dir,
+    permissions: { approve: async () => true },
+    todos: [],
+  });
+  const out = await run({ function: { name: 'read_file', arguments: '{"path":"big.txt"}' } });
+  assert.match(out, /400 lines/);
+  assert.match(out, /line 160/);
+  assert.doesNotMatch(out, /line 200/);
+});
+
 test('parse Qwen-style tool XML', () => {
   const calls = parseFallbackToolCalls(`
 <tool_call>
@@ -123,7 +144,9 @@ test('slash help explains one command and settings are labeled', async () => {
   assert.match(index, /\/help \[command\]/);
   assert.match(index, /\/settings/);
   assert.match(index, /\/tools/);
-  assert.match(slashHelp('bash'), /\/bash/);
+  assert.match(slashHelp('tools'), /Ask in the chat/);
+  assert.doesNotMatch(index, /\/bash/);
+  assert.doesNotMatch(index, /\/search/);
 
   const stream = slashHelp('stream', { stream: true, thinking: true, region: 'auto', vet: 1, security: 'tier1' });
   assert.match(stream, /\/stream \[on\|off\]/);
@@ -191,6 +214,15 @@ test('thinking tag is applied to the last user turn only', async () => {
   assert.equal(msgs[3].content, 'two /no_think');
   const off = applyThinkingTag(msgs, false);
   assert.equal(off[3].content, 'two\n/no_think');
+  const afterTool = applyThinkingTag(
+    [
+      { role: 'user', content: 'search it' },
+      { role: 'assistant', tool_calls: [{ id: 'c1', function: { name: 'web_search' } }] },
+      { role: 'tool', tool_call_id: 'c1', content: 'hits' },
+    ],
+    true
+  );
+  assert.equal(afterTool[0].content, 'search it\n/no_think');
 });
 
 test('think splitter holds partial tags and splits reasoning', async () => {
@@ -248,7 +280,9 @@ test('chatCompletion streams by default and sends native headers', async () => {
     const body = JSON.parse(captured.opts.body);
     assert.equal(captured.url, 'https://api.example/v1/chat/completions');
     assert.equal(body.stream, true);
-    assert.equal(body.tools, undefined);
+    assert.equal(body.tools.length, 1);
+    assert.equal(body.tools[0].function.name, 'grep');
+    assert.equal(body.tool_choice, 'auto');
     assert.match(body.messages.at(-1).content, /\/think$/);
     assert.equal(captured.opts.headers['X-Scalattice-Vet-Replicas'], '1');
     assert.equal(captured.opts.headers['X-Scalattice-Security'], 'tier1');
@@ -347,6 +381,187 @@ test('stream keeps tool_calls from the final message and incremental args', asyn
     assert.equal(msg.tool_calls.length, 1);
     assert.equal(msg.tool_calls[0].function.name, 'grep');
     assert.equal(msg.tool_calls[0].function.arguments, '{"pattern":"x"}');
+  } finally {
+    globalThis.fetch = orig;
+  }
+});
+
+test('runLoop sends tools, runs streamed tool_calls, then posts tool results', async () => {
+  const { runLoop } = await import('./loop.js');
+  const orig = globalThis.fetch;
+  const bodies = [];
+  let n = 0;
+  globalThis.fetch = async (_url, opts) => {
+    bodies.push(JSON.parse(opts.body));
+    n += 1;
+    if (n === 1) {
+      const sse = [
+        `data: ${JSON.stringify({
+          choices: [
+            {
+              delta: {
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: 'call_grep',
+                    type: 'function',
+                    function: { name: 'grep', arguments: '{"pattern":"x"}' },
+                  },
+                ],
+              },
+            },
+          ],
+        })}`,
+        `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'tool_calls' }] })}`,
+        'data: [DONE]',
+        '',
+      ].join('\n');
+      return new Response(sse, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+    }
+    const sse = [
+      `data: ${JSON.stringify({ choices: [{ delta: { content: 'found it' } }] })}`,
+      'data: [DONE]',
+      '',
+    ].join('\n');
+    return new Response(sse, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+  };
+  try {
+    const ran = [];
+    const out = await runLoop({
+      apiUrl: 'https://api.openai.com/v1',
+      apiKey: 'sk-test',
+      model: 'gpt-4.1',
+      messages: [{ role: 'user', content: 'find x' }],
+      tools: [{ type: 'function', function: { name: 'grep' } }],
+      runTool: async (call) => {
+        ran.push(call.function.name);
+        return 'path:1:x';
+      },
+    });
+    assert.equal(bodies[0].tools[0].function.name, 'grep');
+    assert.equal(bodies[0].stream, true);
+    assert.equal(ran[0], 'grep');
+    assert.equal(bodies[1].messages.at(-1).role, 'tool');
+    assert.equal(bodies[1].messages.at(-1).tool_call_id, 'call_grep');
+    assert.equal(bodies[1].messages.at(-2).tool_calls[0].function.name, 'grep');
+    assert.equal(out.reason, 'stop');
+    assert.match(out.messages.at(-1).content, /found it/);
+  } finally {
+    globalThis.fetch = orig;
+  }
+});
+
+test('runLoop retries without thinking when a think-only turn is empty', async () => {
+  const { runLoop } = await import('./loop.js');
+  const orig = globalThis.fetch;
+  const bodies = [];
+  let n = 0;
+  globalThis.fetch = async (_url, opts) => {
+    bodies.push(JSON.parse(opts.body));
+    n += 1;
+    if (n === 1) {
+      const sse = [
+        `data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: 'planning ' } }] })}`,
+        `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'length' }] })}`,
+        'data: [DONE]',
+        '',
+      ].join('\n');
+      return new Response(sse, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+    }
+    const sse = [
+      `data: ${JSON.stringify({ choices: [{ delta: { content: 'hello' } }] })}`,
+      'data: [DONE]',
+      '',
+    ].join('\n');
+    return new Response(sse, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+  };
+  try {
+    const notes = [];
+    const out = await runLoop({
+      apiUrl: 'https://api.example/v1',
+      apiKey: 'k',
+      model: 'qwen',
+      messages: [{ role: 'user', content: 'hi' }],
+      onRetry: (m) => notes.push(m),
+    });
+    assert.equal(bodies.length, 2);
+    assert.match(bodies[0].messages.at(-1).content, /\/think$/);
+    assert.match(bodies[1].messages.at(-1).content, /\/no_think$/);
+    assert.equal(notes.length, 1);
+    assert.equal(out.reason, 'stop');
+    assert.equal(out.messages.at(-1).content, 'hello');
+  } finally {
+    globalThis.fetch = orig;
+  }
+});
+
+test('fitMessagesForContext drops early turns before the GPU window fills', async () => {
+  const { estimateTokens, fitMessagesForContext, isContextOverflowError } = await import('./prompt.js');
+  const tools = [{ type: 'function', function: { name: 'grep', description: 'search' } }];
+  const messages = [
+    { role: 'system', content: 'sys' },
+    { role: 'user', content: 'a'.repeat(4000) },
+    { role: 'assistant', content: 'b'.repeat(4000) },
+    { role: 'user', content: 'c'.repeat(4000) },
+    { role: 'assistant', content: 'd'.repeat(4000) },
+    { role: 'user', content: 'latest' },
+  ];
+  const fitted = fitMessagesForContext(messages, { budget: 800, tools, keep: 4 });
+  assert.ok(estimateTokens(fitted, tools) < estimateTokens(messages, tools));
+  assert.equal(fitted[0].role, 'system');
+  assert.match(fitted.at(-1).content, /latest/);
+  assert.match(fitted.map((m) => m.content).join('\n'), /compacted/);
+  assert.equal(
+    isContextOverflowError(
+      new Error('API 400: This model\'s maximum context length is 4096 tokens. Shorten the messages or reduce max_tokens.')
+    ),
+    true
+  );
+});
+
+test('runLoop compacts and retries when the API rejects an oversize prompt', async () => {
+  const { runLoop } = await import('./loop.js');
+  const orig = globalThis.fetch;
+  let n = 0;
+  globalThis.fetch = async (_url, opts) => {
+    n += 1;
+    const body = JSON.parse(opts.body);
+    if (n === 1) {
+      return new Response(
+        JSON.stringify({
+          error: {
+            message:
+              "This model's maximum context length is 4096 tokens. However, you requested 5559 tokens (4264 in the messages, 1295 in the completion). Shorten the messages or reduce max_tokens.",
+          },
+        }),
+        { status: 400, headers: { 'content-type': 'application/json' } }
+      );
+    }
+    assert.ok(body.messages.some((m) => String(m.content || '').includes('latest')));
+    const sse = [
+      `data: ${JSON.stringify({ choices: [{ delta: { content: 'ok' } }] })}`,
+      'data: [DONE]',
+      '',
+    ].join('\n');
+    return new Response(sse, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+  };
+  try {
+    const notes = [];
+    const out = await runLoop({
+      apiUrl: 'https://api.example/v1',
+      apiKey: 'k',
+      model: 'qwen',
+      messages: [
+        { role: 'system', content: 'sys' },
+        { role: 'user', content: `old essay ${'x'.repeat(9000)}` },
+        { role: 'assistant', content: 'y'.repeat(9000) },
+        { role: 'user', content: 'latest' },
+      ],
+      onRetry: (m) => notes.push(m),
+    });
+    assert.equal(n, 2);
+    assert.ok(notes.some((m) => /compact|shrink/i.test(m)));
+    assert.equal(out.messages.at(-1).content, 'ok');
   } finally {
     globalThis.fetch = orig;
   }

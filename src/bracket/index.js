@@ -56,8 +56,8 @@ Inside Bracket:
   /settings           labeled stream / think / region / vet / security
   /stream /think /region /vet /security /model /yolo /credits /whoami
   /chats /chat /new /rename /forget /clear /compact /exit
-  /tools /bash /read /ls /grep /glob
-  Tab completes commands, flags, models, chats, and paths.
+  /tools
+  Tab completes commands, flags, models, and chats.
 
 Auth: sign in (session). Bracket then mints a developer inference key (slt_…).
 Do not use slt_mgmt_… or slt_provider_…. To set a key yourself:
@@ -79,14 +79,15 @@ async function completeTurn({
   maxTurns,
   settings,
   ui,
+  signal: outerSignal,
 }) {
   const ac = new AbortController();
+  const signal = outerSignal || ac.signal;
   const onSig = () => ac.abort();
-  process.once('SIGINT', onSig);
+  if (!ui) process.once('SIGINT', onSig);
   const runTool = createToolRunner({ cwd, permissions, todos });
   const stream = settings?.stream !== false;
   try {
-    ui?.startAssistant?.();
     const result = await runLoop({
       messages,
       tools: TOOL_DEFS,
@@ -97,7 +98,9 @@ async function completeTurn({
       maxTurns,
       stream,
       settings,
-      signal: ac.signal,
+      signal,
+      onTurnStart: () => ui?.startAssistant?.(),
+      onRetry: (msg) => ui?.note?.(msg),
       onDelta: (part) => {
         const p = deltaPart(part);
         if (ui) ui.writeDelta(p);
@@ -111,12 +114,18 @@ async function completeTurn({
         if (ui) {
           if (assistant.tool_calls?.length) ui.replaceAssistant(assistant.content || '');
           ui.endAssistant();
+          if (assistant.finish_reason === 'length') {
+            ui.note('Stopped: hit the token limit. Ask it to continue, or /think off.');
+          }
         } else if (stream && assistant.content) process.stdout.write('\n');
         if (!ui && !stream && assistant.content) print(assistant.content);
         if (!ui && !stream) {
           for (const call of assistant.tool_calls || []) {
             print(`▸ ${toolSummary(call)}`);
           }
+        }
+        if (!ui && assistant.finish_reason === 'length') {
+          print('Stopped: hit the token limit.');
         }
       },
     });
@@ -125,9 +134,14 @@ async function completeTurn({
       if (ui) ui.note(msg);
       else print(msg);
     }
+    if (result.reason === 'empty') {
+      const msg = 'The model stopped before an answer. Try again, or /think off.';
+      if (ui) ui.note(msg);
+      else print(msg);
+    }
     return result.messages;
   } finally {
-    process.removeListener('SIGINT', onSig);
+    if (!ui) process.removeListener('SIGINT', onSig);
   }
 }
 
@@ -276,14 +290,6 @@ export async function cmdBracket(opts = {}) {
     if (rec) openChat(rec);
   };
 
-  const runUserTool = createToolRunner({ cwd, permissions, todos });
-
-  const slashTool = async (name, args, label) => {
-    ui.tool(label || toolSummary({ function: { name, arguments: JSON.stringify(args) } }));
-    const result = await runUserTool({ function: { name, arguments: JSON.stringify(args) } });
-    ui.note(String(result ?? ''));
-  };
-
   const chatsNote = (all = false) => {
     const rows = listSessions({ cwd, all, limit: 30 });
     const body = formatSessionList(rows, chatId, { showCwd: all });
@@ -364,58 +370,6 @@ export async function cmdBracket(opts = {}) {
       }
       case 'tools':
         ui.note(toolsBlock());
-        return 'ok';
-      case 'bash':
-        if (!arg) {
-          ui.note(slashHelp('bash'));
-          return 'ok';
-        }
-        await slashTool('bash', { command: arg }, `bash  ${arg}`);
-        return 'ok';
-      case 'read':
-        if (!arg) {
-          ui.note(slashHelp('read'));
-          return 'ok';
-        }
-        await slashTool('read_file', { path: arg }, `read_file  ${arg}`);
-        return 'ok';
-      case 'ls':
-        await slashTool('list_dir', { path: arg || '.' }, `list_dir  ${arg || '.'}`);
-        return 'ok';
-      case 'glob':
-        if (!arg) {
-          ui.note(slashHelp('glob'));
-          return 'ok';
-        }
-        await slashTool('glob', { pattern: arg }, `glob  ${arg}`);
-        return 'ok';
-      case 'grep': {
-        const [pattern, ...restPath] = arg.split(/\s+/);
-        if (!pattern) {
-          ui.note(slashHelp('grep'));
-          return 'ok';
-        }
-        const grepPath = restPath.join(' ');
-        await slashTool(
-          'grep',
-          { pattern, ...(grepPath ? { path: grepPath } : {}) },
-          `grep  ${arg}`
-        );
-        return 'ok';
-      }
-      case 'search':
-        if (!arg) {
-          ui.note(slashHelp('search'));
-          return 'ok';
-        }
-        await slashTool('web_search', { query: arg }, `web_search  ${arg}`);
-        return 'ok';
-      case 'fetch':
-        if (!arg) {
-          ui.note(slashHelp('fetch'));
-          return 'ok';
-        }
-        await slashTool('web_fetch', { url: arg }, `web_fetch  ${arg}`);
         return 'ok';
       case 'compact':
         messages = compactMessages(messages, { keep: 10 });
@@ -545,7 +499,7 @@ export async function cmdBracket(opts = {}) {
     }
   };
 
-  const runUserTurn = async (text) => {
+  const runUserTurn = async (text, signal) => {
     messages.push({ role: 'user', content: text });
     try {
       messages = await completeTurn({
@@ -558,6 +512,7 @@ export async function cmdBracket(opts = {}) {
         maxTurns,
         settings,
         ui,
+        signal,
       });
       return true;
     } catch (err) {
@@ -576,9 +531,10 @@ export async function cmdBracket(opts = {}) {
 
   const sendTurn = async (text) => {
     ui.user(text);
-    ui.beginWork();
+    const ac = new AbortController();
+    ui.beginWork(() => ac.abort());
     try {
-      return await runUserTurn(text);
+      return await runUserTurn(text, ac.signal);
     } finally {
       ui.endWork();
     }

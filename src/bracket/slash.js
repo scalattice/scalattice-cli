@@ -1,6 +1,3 @@
-import fs from 'node:fs';
-import path from 'node:path';
-
 const ALIAS = {
   streaming: 'stream',
   thinking: 'think',
@@ -16,9 +13,6 @@ const ALIAS = {
   renamechat: 'rename',
   delete: 'forget',
   rm: 'forget',
-  web: 'search',
-  google: 'search',
-  curl: 'fetch',
 };
 
 export const SLASH = {
@@ -160,45 +154,10 @@ export const SLASH = {
       'tier2.5  stricter policy (turns streaming off)\n' +
       'Sent as X-Scalattice-Security. No argument shows this help and the current value.',
   },
-  ls: {
-    usage: '/ls [path]',
-    summary: 'List a directory in the workspace',
-    detail: 'Same as the list_dir tool. Default is the workspace root.',
-  },
-  read: {
-    usage: '/read <path>',
-    summary: 'Read a workspace file',
-    detail: 'Same as the read_file tool. Tab completes paths.',
-  },
-  grep: {
-    usage: '/grep <pattern> [path]',
-    summary: 'Search file contents',
-    detail: 'JavaScript regex, no surrounding slashes. Optional path limits the search.',
-  },
-  glob: {
-    usage: '/glob <pattern>',
-    summary: 'Find files by glob',
-    detail: 'Example: /glob **/*.js',
-  },
-  search: {
-    usage: '/search <query>',
-    summary: 'Search the public web',
-    detail: 'Same as the web_search tool. Live results, not training data.',
-  },
-  fetch: {
-    usage: '/fetch <url>',
-    summary: 'Fetch a public URL as text',
-    detail: 'Same as the web_fetch tool. http(s) only. HTML is stripped to readable text.',
-  },
-  bash: {
-    usage: '/bash <command>',
-    summary: 'Run a shell command in the workspace',
-    detail: 'Same as the bash tool. Asks before running unless yolo is on.',
-  },
   tools: {
     usage: '/tools',
     summary: 'List tools the model can call',
-    detail: 'Shows bash, read_file, edit_file, web_search, web_fetch, and the rest. /bash /read /ls /grep /glob /search /fetch run some of them yourself.',
+    detail: 'Shows bash, read_file, edit_file, web_search, web_fetch, and the rest. Ask in the chat; Bracket runs them.',
   },
 };
 
@@ -313,46 +272,11 @@ function commonPrefix(items) {
   return prefix;
 }
 
-export function completePath(prefix, cwd) {
-  const root = cwd || process.cwd();
-  const raw = String(prefix || '').replaceAll('\\', '/');
-  const hasDir = raw.includes('/');
-  const dirPart = hasDir ? path.posix.dirname(raw) : '.';
-  const base = hasDir ? path.posix.basename(raw) : raw;
-  let absDir;
-  try {
-    absDir = path.resolve(root, dirPart === '.' ? '' : dirPart);
-  } catch {
-    return [];
-  }
-  let names = [];
-  try {
-    names = fs.readdirSync(absDir);
-  } catch {
-    return [];
-  }
-  const out = [];
-  for (const name of names.sort()) {
-    if (name.startsWith('.')) continue;
-    if (base && !name.startsWith(base)) continue;
-    const rel = dirPart === '.' ? name : `${dirPart}/${name}`;
-    let isDir = false;
-    try {
-      isDir = fs.statSync(path.join(absDir, name)).isDirectory();
-    } catch {
-      continue;
-    }
-    out.push(isDir ? `${rel}/` : rel);
-    if (out.length >= 40) break;
-  }
-  return out;
-}
-
 function commandNames() {
   return [...new Set([...Object.keys(SLASH), ...Object.keys(ALIAS)])].sort();
 }
 
-function argCandidates(cmd, last, ctx, line) {
+function argCandidates(cmd, ctx) {
   switch (cmd) {
     case 'help':
       return Object.keys(SLASH);
@@ -375,21 +299,6 @@ function argCandidates(cmd, last, ctx, line) {
       return (ctx.chats || []).flatMap((row, i) =>
         [String(i + 1), row.id, String(row.id || '').slice(0, 8)].filter(Boolean)
       );
-    case 'read':
-    case 'ls':
-    case 'glob':
-      return completePath(last, ctx.cwd);
-    case 'grep': {
-      const afterCmd = line.slice(line.indexOf(' ') + 1);
-      const tokens = afterCmd.trim() ? afterCmd.trim().split(/\s+/) : [];
-      const first = tokens.length <= 1 && !/\s$/.test(line);
-      return first ? [] : completePath(last, ctx.cwd);
-    }
-    case 'bash':
-      if (last.startsWith('./') || last.startsWith('/') || last.includes('/')) {
-        return completePath(last, ctx.cwd);
-      }
-      return [];
     default:
       return [];
   }
@@ -425,7 +334,7 @@ export function completeSlash(input, ctx = {}) {
   const cmd = canonSlash(line.slice(1, space));
   const last = /\s$/.test(line) ? '' : line.slice(line.search(/\S+$/));
   const head = line.slice(0, line.length - last.length);
-  const hits = argCandidates(cmd, last, ctx, line).filter((c) =>
+  const hits = argCandidates(cmd, ctx).filter((c) =>
     String(c).toLowerCase().startsWith(String(last).toLowerCase())
   );
   const uniq = [...new Set(hits)];
