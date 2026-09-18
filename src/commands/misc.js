@@ -1,7 +1,8 @@
-import { cloudFetch, mgmtFetch } from '../api.js';
+import { mgmtFetch } from '../api.js';
 import { loadConfig } from '../config.js';
 import { print } from '../io.js';
 import { requireCloudAuth } from './mgmt.js';
+import { probeSession } from '../session.js';
 
 export async function cmdCredits() {
   const cfg = requireCloudAuth(loadConfig());
@@ -53,22 +54,28 @@ export async function cmdWhoami() {
   print(`Cloud:   ${cfg.cloudUrl}`);
   print(`API:     ${cfg.apiUrl}`);
   print(`Email:   ${cfg.email || '(not signed in)'}`);
-  print(`Session: ${cfg.sessionToken ? 'yes' : 'no'}`);
+  if (!cfg.sessionToken && !cfg.mgmtKey) {
+    print('Session: no');
+    return;
+  }
   if (cfg.sessionToken) {
-    try {
-      const me = await cloudFetch(cfg, '/api/v1/account/me', { token: cfg.sessionToken });
-      if (me?.email) print(`Account: ${me.email}${me.name ? ` (${me.name})` : ''}`);
-      if (me?.accountAudience) print(`Audience: ${me.accountAudience}`);
-    } catch {
-      /* ignore */
+    const me = await probeSession(cfg);
+    if (!me) {
+      print('Session: stored, but expired or invalid');
+      print(`Refresh: open ${cfg.cloudUrl}/auth and run the curl command from that page`);
+      return;
     }
-  } else if (cfg.mgmtKey) {
-    try {
-      const me = await mgmtFetch(cfg, '/api/v1/account/me');
-      if (me?.email) print(`Account: ${me.email}${me.name ? ` (${me.name})` : ''}`);
-      if (me?.accountAudience) print(`Audience: ${me.accountAudience}`);
-    } catch {
-      /* ignore */
-    }
+    print('Session: yes');
+    if (me?.email) print(`Account: ${me.email}${me.name ? ` (${me.name})` : ''}`);
+    if (me?.accountAudience) print(`Audience: ${me.accountAudience}`);
+    return;
+  }
+  try {
+    const me = await mgmtFetch(cfg, '/api/v1/account/me');
+    print('Session: management key');
+    if (me?.email) print(`Account: ${me.email}${me.name ? ` (${me.name})` : ''}`);
+    if (me?.accountAudience) print(`Audience: ${me.accountAudience}`);
+  } catch (err) {
+    print(`Session: management key failed (${err?.message || err})`);
   }
 }

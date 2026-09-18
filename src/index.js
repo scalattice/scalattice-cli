@@ -25,6 +25,7 @@ import {
   cmdProviderReconnect,
 } from './commands/provider.js';
 import { runMcpServer } from './commands/mcp.js';
+import { cmdBracket, BRACKET_HELP } from './bracket/index.js';
 import { print, setPromptInterface } from './io.js';
 import { configPath, loadConfig } from './config.js';
 import readline from 'node:readline/promises';
@@ -43,6 +44,12 @@ Usage:
   scalattice credits
   scalattice whoami
   scalattice mcp
+  scalattice bracket ["prompt"] [--yolo] [--print] [--model ID]
+
+Bracket (coding harness — not scalattice-agent, the GPU daemon):
+  scalattice bracket
+  scalattice bracket "fix the failing tests"
+  scalattice bracket --help
 
 Developers (inference API keys slt_…):
   scalattice developers keys list|create|roll|revoke
@@ -71,7 +78,7 @@ Quick start:
 
 Config file: ${configPath()}
 Env: SCALATTICE_CLOUD_URL, SCALATTICE_API_URL, SCALATTICE_SESSION_TOKEN,
-  SCALATTICE_API_KEY, OPENAI_API_KEY, SCALATTICE_MGMT_KEY
+  SCALATTICE_API_KEY, OPENAI_API_KEY, SCALATTICE_MGMT_KEY, SCALATTICE_BRACKET_MODEL
 `;
 
 const SHELL_HELP = `Commands:
@@ -79,6 +86,7 @@ const SHELL_HELP = `Commands:
   login [--email …]
   logout
   credits
+  bracket ["prompt"]
   developers keys list|create|roll|revoke
   account keys list|create|roll|revoke
   init
@@ -116,6 +124,9 @@ const CMD_ALIAS = {
   developers: 'developers',
   provider: 'provider',
   providers: 'provider',
+  backet: 'bracket',
+  braket: 'bracket',
+  brackett: 'bracket',
 };
 
 function asKeys(word) {
@@ -160,6 +171,12 @@ function parseArgs(argv) {
     else if (a === '--new-key') flags.newKey = true;
     else if (a === '--yes' || a === '-y') flags.yes = true;
     else if (a === '--help' || a === '-h') flags.help = true;
+    else if (a === '--yolo' || a === '--auto' || a === '--dangerously-skip-permissions') flags.yolo = true;
+    else if (a === '--print' || a === '-p') flags.print = true;
+    else if (a === '--continue' || a === '-c') flags.continue = true;
+    else if (a === '--model') flags.model = argv[++i];
+    else if (a === '--cwd') flags.cwd = argv[++i];
+    else if (a === '--max-turns') flags.maxTurns = Number(argv[++i]);
     else if (a.startsWith('-')) throw new Error(`Unknown flag: ${a}`);
     else positionals.push(a);
   }
@@ -308,13 +325,13 @@ async function runProvider(sub, rest, flags) {
   }
 }
 
-async function dispatch(argv, { shell = false } = {}) {
+async function dispatch(argv, { shell = false, rl } = {}) {
   const { flags, positionals } = parseArgs(argv);
   flags.shell = shell;
   const [rawCmd, sub, ...rest] = positionals;
   const cmd = CMD_ALIAS[rawCmd] || rawCmd;
 
-  if (!cmd || flags.help || cmd === 'help') {
+  if (!cmd || cmd === 'help' || (flags.help && cmd !== 'bracket')) {
     print((shell ? SHELL_HELP : HELP).trim());
     return;
   }
@@ -352,6 +369,27 @@ async function dispatch(argv, { shell = false } = {}) {
     case 'mcp':
       await runMcpServer();
       break;
+    case 'bracket': {
+      if (flags.help) {
+        print(BRACKET_HELP.trim());
+        break;
+      }
+      const prompt = [sub, ...rest].filter(Boolean).join(' ');
+      const parentRl = rl;
+      if (parentRl) {
+        parentRl.pause();
+        setPromptInterface(null);
+      }
+      try {
+        await cmdBracket({ flags, prompt });
+      } finally {
+        if (parentRl) {
+          parentRl.resume();
+          setPromptInterface(parentRl);
+        }
+      }
+      break;
+    }
     default:
       throw new Error(
         shell ? `Unknown command: ${cmd}. Try help.` : `Unknown command: ${cmd}\n\n${HELP}`
@@ -381,7 +419,7 @@ async function runPrompt() {
         continue;
       }
       try {
-        await dispatch(argv, { shell: true });
+        await dispatch(argv, { shell: true, rl });
       } catch (err) {
         print(err?.message || String(err));
       }
@@ -394,13 +432,18 @@ async function runPrompt() {
 
 export async function main(argv) {
   const { flags, positionals } = parseArgs(argv);
-  const [cmd] = positionals;
+  const [rawCmd] = positionals;
+  const cmd = CMD_ALIAS[rawCmd] || rawCmd;
 
-  if (flags.help || cmd === 'help') {
+  if (cmd === 'help' || (flags.help && cmd !== 'bracket')) {
     print(HELP.trim());
     return;
   }
   if (!cmd) {
+    if (flags.yolo || flags.print || flags.continue) {
+      await cmdBracket({ flags, prompt: '' });
+      return;
+    }
     if (input.isTTY && output.isTTY) {
       await runPrompt();
       return;

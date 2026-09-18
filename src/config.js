@@ -7,13 +7,26 @@ const DEFAULTS = {
   apiUrl: 'https://api.scalattice.cloud/v1',
 };
 
-function configDir() {
+export function configDir() {
   if (process.env.SCALATTICE_CONFIG_DIR) return process.env.SCALATTICE_CONFIG_DIR;
   if (process.platform === 'win32') {
     return path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'scalattice');
   }
   const xdg = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
   return path.join(xdg, 'scalattice');
+}
+
+export function dataDir() {
+  if (process.env.SCALATTICE_DATA_DIR) return process.env.SCALATTICE_DATA_DIR;
+  if (process.platform === 'win32') {
+    return path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'scalattice');
+  }
+  const xdg = process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
+  return path.join(xdg, 'scalattice');
+}
+
+export function bracketKeyPath() {
+  return path.join(configDir(), 'bracket.key');
 }
 
 export function configPath() {
