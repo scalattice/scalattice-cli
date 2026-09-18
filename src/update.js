@@ -122,6 +122,16 @@ function posixPath(p) {
   return path.resolve(p).replace(/\\/g, '/');
 }
 
+function writeReplacing(dest, body, opts) {
+  try {
+    fs.lstatSync(dest);
+    fs.unlinkSync(dest);
+  } catch {
+    // dest does not exist yet
+  }
+  fs.writeFileSync(dest, body, opts);
+}
+
 function portableNodeHomes(prefix, { platform = process.platform, dataHome } = {}) {
   const homes = [path.join(prefix, 'runtime', 'node')];
   if (platform !== 'win32') {
@@ -153,11 +163,11 @@ export function rewritePortableWrappers(
   const cliAbs = path.resolve(cli);
   const nodeHome = path.dirname(node);
   if (platform === 'win32') {
-    fs.writeFileSync(
+    writeReplacing(
       path.join(prefix, 'scalattice.cmd'),
       `@echo off\r\nsetlocal\r\nset "PATH=${path.resolve(nodeHome)};%PATH%"\r\n"${node}" "${cliAbs}" %*\r\n`
     );
-    fs.writeFileSync(
+    writeReplacing(
       path.join(prefix, 'scalattice'),
       `#!/bin/sh\nexport PATH="${posixPath(nodeHome)}:$PATH"\nexec "${posixPath(node)}" "${posixPath(cliAbs)}" "$@"\n`
     );
@@ -165,7 +175,7 @@ export function rewritePortableWrappers(
   }
   const binDir = path.join(prefix, 'bin');
   fs.mkdirSync(binDir, { recursive: true });
-  fs.writeFileSync(
+  writeReplacing(
     path.join(binDir, 'scalattice'),
     `#!/bin/sh\nexport PATH="${posixPath(nodeHome)}:$PATH"\nexec "${posixPath(node)}" "${posixPath(cliAbs)}" "$@"\n`,
     { mode: 0o755 }

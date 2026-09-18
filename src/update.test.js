@@ -237,6 +237,14 @@ test('rewritePortableWrappers writes a unix shim for the private runtime', () =>
     assert.match(sh, /#!/);
     assert.match(sh, /scalattice\.js/);
     assert.match(sh, /runtime\/node\/bin/);
+    fs.writeFileSync(cli, 'export const ok = 1;\n');
+    fs.mkdirSync(path.join(prefix, 'bin'), { recursive: true });
+    fs.rmSync(path.join(prefix, 'bin', 'scalattice'));
+    fs.symlinkSync(cli, path.join(prefix, 'bin', 'scalattice'));
+    assert.equal(rewritePortableWrappers(prefix, { execPath, platform: 'linux', dataHome }), true);
+    assert.match(fs.readFileSync(path.join(prefix, 'bin', 'scalattice'), 'utf8'), /#!/);
+    assert.equal(fs.readFileSync(cli, 'utf8'), 'export const ok = 1;\n');
+    assert.equal(fs.lstatSync(path.join(prefix, 'bin', 'scalattice')).isSymbolicLink(), false);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
