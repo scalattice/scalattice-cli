@@ -91,8 +91,9 @@ Inside the prompt, drop the `scalattice` prefix. From a normal terminal, keep it
 | `provider schedule` | Patch one machine’s schedule |
 | `mcp` | MCP stdio server (run as `scalattice mcp`, not inside the prompt) |
 | `bracket` | Coding harness: read/edit files and run commands in this directory |
+| `bracket key [show\|roll\|revoke]` | Bracket inference key (file `bracket.key`; `--show` prints the secret) |
 
-`developer`/`developers`, `provider`/`providers`, `machine`/`machines`, and `key`/`keys` are aliases.
+`developer`/`developers`, `provider`/`providers`, `machine`/`machines`, `key`/`keys`, and `bracket`/`brackets` are aliases (any capitalization).
 
 Config: `~/.config/scalattice/config.json` (mode `0600`): session + email only. Keys are never written there. Bracket may store its own inference key at `~/.config/scalattice/bracket.key` (also `0600`).
 
@@ -112,11 +113,20 @@ scalattice bracket --print "what does this repo do?"
 scalattice bracket --yolo "apply the refactor"
 ```
 
-Login is enough: Bracket mints a **developer inference key** (`slt_…`) named `CLI bracket` into `~/.config/scalattice/bracket.key`. That is the key type chat completions use. An account management key (`slt_mgmt_…`) cannot call the inference API. To set a key yourself: `export SCALATTICE_API_KEY=slt_…` (`OPENAI_API_KEY` is accepted as an alias). Default model is `qwen-3-coder-30b-a3b` (override with `--model` or `SCALATTICE_BRACKET_MODEL`).
+Login is enough: Bracket mints a **developer inference key** (`slt_…`) named `CLI bracket` into `~/.config/scalattice/bracket.key`. That is the key type chat completions use. An account management key (`slt_mgmt_…`) cannot call the inference API. To set a key yourself: `export SCALATTICE_API_KEY=slt_…` (`OPENAI_API_KEY` is accepted as an alias). Env wins over the file.
+
+```bash
+scalattice bracket key           # source, last four, path (no secret)
+scalattice bracket key roll      # new secret, rewrite bracket.key
+scalattice bracket key revoke    # revoke Cloud key and delete the file
+scalattice bracket key --show    # print the full secret
+```
+
+Inside Bracket, `/key`, `/key roll`, and `/key revoke` do the same. `/key` never prints the full secret. Default model is `qwen-3-coder-30b-a3b` (override with `--model` or `SCALATTICE_BRACKET_MODEL`).
 
 Streaming is on by default and sends `X-Scalattice-Vet-Replicas: 1` plus `X-Scalattice-Security: tier1` (required by the API). Thinking is on by default. Toggle with `--no-stream`, `--no-think`, `--region auto|us|eu|ap`, `--vet 1|2|3`, `--security tier1|tier2.5`, or the matching slash commands. Multi-vet or `tier2.5` turns streaming off.
 
-Inside the prompt: `/help` lists commands; `/help stream` (or region, vet, settings, chats) explains one. `/settings` prints labeled inference options. `/chats` lists saved conversations; `/chat 2` switches; `/new` starts a blank one. `/clear` `/compact` `/model` `/yolo` `/credits` `/whoami`. Shell and file writes ask before running unless you pass `--yolo` (also `--auto` / `--dangerously-skip-permissions`).
+Inside the prompt: `/help` lists commands; `/help stream` (or region, vet, settings, chats) explains one. `/settings` prints labeled inference options. `/chats` lists saved conversations; `/chat 2` switches; `/new` starts a blank one. `/clear` `/compact` `/model` `/yolo` `/credits` `/whoami` `/key`. Shell and file writes ask before running unless you pass `--yolo` (also `--auto` / `--dangerously-skip-permissions`).
 
 Chats are stored locally under `~/.local/share/scalattice/bracket-sessions/` (or `%LOCALAPPDATA%\scalattice\bracket-sessions` on Windows). `--continue` resumes the last chat in this workspace.
 

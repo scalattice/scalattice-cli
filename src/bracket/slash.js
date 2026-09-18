@@ -3,6 +3,7 @@ const ALIAS = {
   thinking: 'think',
   models: 'model',
   setting: 'settings',
+  keys: 'key',
   quit: 'exit',
   history: 'chats',
   conversations: 'chats',
@@ -101,6 +102,17 @@ export const SLASH = {
     usage: '/whoami',
     summary: 'CLI version, cloud, session, inference key',
     detail: 'Prints the same snapshot as scalattice whoami.',
+  },
+  key: {
+    usage: '/key [show|roll|revoke]',
+    summary: 'Show, rotate, or revoke the Bracket inference key',
+    detail:
+      'Bare /key shows the source (env or bracket.key), last four, and file path.\n' +
+      'It never prints the full secret in this chat.\n' +
+      '/key roll issues a new secret, writes bracket.key, and uses it for this session.\n' +
+      '/key revoke deletes the Cloud key and the local file.\n' +
+      'If SCALATTICE_API_KEY is set, it still wins on the next launch until you unset it.\n' +
+      'Same as: scalattice bracket key [show|roll|revoke]',
   },
   settings: {
     usage: '/settings',
@@ -292,6 +304,8 @@ function argCandidates(cmd, ctx) {
       return ['tier1', 'tier2.5'];
     case 'chats':
       return ['all'];
+    case 'key':
+      return ['show', 'roll', 'revoke'];
     case 'model':
       return (ctx.models || []).map(String);
     case 'chat':

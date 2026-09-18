@@ -1,4 +1,5 @@
 import { mgmtFetch } from '../api.js';
+import { inspectBracketKey } from '../bracket/key.js';
 import { loadConfig } from '../config.js';
 import { print } from '../io.js';
 import { authedFetch, requireCloudAuth } from './mgmt.js';
@@ -155,11 +156,18 @@ export async function whoamiText(cfg = loadConfig()) {
   }
 
   if (looksLikeInferenceKey(cfg.apiKey)) {
-    lines.push(`Inference: SCALATTICE_API_KEY set (…${cfg.apiKey.slice(-4)})`);
+    lines.push(`Inference: env (…${cfg.apiKey.slice(-4)})`);
     if (!sessionOk) lines.push('Bracket: scalattice bracket   (the inference key is enough)');
   } else {
-    lines.push('Inference: no developer key in the environment');
+    const key = inspectBracketKey(cfg);
+    if (key.storedKey) {
+      lines.push(`Inference: bracket.key (…${key.lastFour})`);
+      lines.push(`Key file: ${key.path}`);
+    } else {
+      lines.push('Inference: none (no env, no bracket.key)');
+    }
   }
+  lines.push('Manage:  scalattice bracket key   (show / roll / revoke)');
   return lines.join('\n');
 }
 
