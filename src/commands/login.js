@@ -18,7 +18,7 @@ export async function cmdLogin(args) {
   } catch (err) {
     if (/open this page in a browser/i.test(err?.message || '')) {
       throw new Error(
-        `This terminal cannot send a login code.\nOpen ${cfg.cloudUrl}/auth. If that tab is already signed in, Cloud shows a command to copy — run it here.`
+        `This terminal cannot send a login code.\nOpen ${cfg.cloudUrl}/auth. If that tab is already signed in, Cloud shows a command to copy. Run it here.`
       );
     }
     throw err;

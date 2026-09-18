@@ -12,7 +12,7 @@ export function sessionRefreshHint(cfg) {
   const cloud = cfg?.cloudUrl || 'https://scalattice.cloud';
   return [
     'Cloud session is missing or expired.',
-    `Open ${cloud}/auth. If that tab is already signed in, Cloud shows a command to copy — run it here.`,
+    `Open ${cloud}/auth. If that tab is already signed in, Cloud shows a command to copy. Run it here.`,
     `That writes a session to ${configPath()}. Then try again.`,
   ].join('\n');
 }
@@ -23,7 +23,7 @@ export function bracketAuthHint(cfg) {
     '',
     'Bracket calls the inference API, so it needs a developer key (slt_…).',
     'Not an account management key (slt_mgmt_…) and not a provider token (slt_provider_…).',
-    'A live session is enough — Bracket mints the developer key.',
+    'A live session is enough. Bracket mints the developer key.',
     'To set one yourself:  export SCALATTICE_API_KEY=slt_…',
   ].join('\n');
 }

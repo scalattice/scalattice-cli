@@ -66,22 +66,21 @@ export function bannerCreditLines(data, model) {
   return lines;
 }
 
-export async function cmdCredits() {
-  const cfg = requireCloudAuth(loadConfig());
-  const data = await authedFetch(cfg, '/api/v1/developers/billing');
-  if (data.unlimitedCredits) {
-    print('Wallet: unlimited (admin)');
+export function formatCredits(data) {
+  const lines = [];
+  if (data?.unlimitedCredits) {
+    lines.push('Wallet: unlimited (admin)');
   } else {
-    const bal = data.creditBalanceUsd;
-    print(`Wallet: ${bal == null ? 'n/a' : `$${Number(bal).toFixed(4)}`}`);
+    const bal = data?.creditBalanceUsd;
+    lines.push(`Wallet: ${bal == null ? 'n/a' : `$${Number(bal).toFixed(4)}`}`);
   }
-  print(`Lifetime spend: $${Number(data.lifetimeSpendUsd || 0).toFixed(4)}`);
-  const grants = data.modelCredits || [];
+  lines.push(`Lifetime spend: $${Number(data?.lifetimeSpendUsd || 0).toFixed(4)}`);
+  const grants = data?.modelCredits || [];
   if (!grants.length) {
-    print('Model grants: none');
-    return;
+    lines.push('Model grants: none');
+    return lines.join('\n');
   }
-  print('Model grants:');
+  lines.push('Model grants:');
   for (const g of grants) {
     const label = g.displayName || g.display_name || g.modelId || g.model_id;
     const grantType = g.grantType || g.grant_type;
@@ -95,8 +94,18 @@ export async function cmdCredits() {
             : `$${Number(g.balance_usd).toFixed(4)}`;
     const expRaw = g.expiresAt || g.expires_at;
     const exp = expRaw ? ` · expires ${expRaw}` : '';
-    print(`  - ${label} (${grantType}): ${bal}${exp}`);
+    lines.push(`  - ${label} (${grantType}): ${bal}${exp}`);
   }
+  return lines.join('\n');
+}
+
+export async function creditsText(cfg = loadConfig()) {
+  const data = await authedFetch(requireCloudAuth(cfg), '/api/v1/developers/billing');
+  return formatCredits(data);
+}
+
+export async function cmdCredits() {
+  print(await creditsText());
 }
 
 export async function cmdInit() {
@@ -111,43 +120,49 @@ export async function cmdInit() {
   print(`export OPENAI_API_KEY=${cfg.apiKey}`);
 }
 
-export async function cmdWhoami() {
-  const cfg = loadConfig();
-  print(`CLI:     ${localVersion() || 'unknown'}`);
-  print(`Cloud:   ${cfg.cloudUrl}`);
-  print(`API:     ${cfg.apiUrl}`);
-  print(`Email:   ${cfg.email || '(not signed in)'}`);
+export async function whoamiText(cfg = loadConfig()) {
+  const lines = [
+    `CLI:     ${localVersion() || 'unknown'}`,
+    `Cloud:   ${cfg.cloudUrl}`,
+    `API:     ${cfg.apiUrl}`,
+    `Email:   ${cfg.email || '(not signed in)'}`,
+  ];
 
   let sessionOk = false;
   if (cfg.sessionToken) {
     const me = await probeSession(cfg);
     if (!me) {
-      print('Session: stored, but expired or invalid');
-      print(`Refresh: open ${cfg.cloudUrl}/auth. If that tab is already signed in, Cloud shows a command to copy.`);
+      lines.push('Session: stored, but expired or invalid');
+      lines.push(`Refresh: open ${cfg.cloudUrl}/auth. If that tab is already signed in, Cloud shows a command to copy.`);
     } else {
       sessionOk = true;
-      print('Session: yes');
-      if (me?.email) print(`Account: ${me.email}${me.name ? ` (${me.name})` : ''}`);
-      if (me?.accountAudience) print(`Audience: ${me.accountAudience}`);
+      lines.push('Session: yes');
+      if (me?.email) lines.push(`Account: ${me.email}${me.name ? ` (${me.name})` : ''}`);
+      if (me?.accountAudience) lines.push(`Audience: ${me.accountAudience}`);
     }
   } else if (cfg.mgmtKey) {
     try {
       const me = await mgmtFetch(cfg, '/api/v1/account/me');
       sessionOk = true;
-      print('Session: management key');
-      if (me?.email) print(`Account: ${me.email}${me.name ? ` (${me.name})` : ''}`);
-      if (me?.accountAudience) print(`Audience: ${me.accountAudience}`);
+      lines.push('Session: management key');
+      if (me?.email) lines.push(`Account: ${me.email}${me.name ? ` (${me.name})` : ''}`);
+      if (me?.accountAudience) lines.push(`Audience: ${me.accountAudience}`);
     } catch (err) {
-      print(`Session: management key failed (${err?.message || err})`);
+      lines.push(`Session: management key failed (${err?.message || err})`);
     }
   } else {
-    print('Session: no');
+    lines.push('Session: no');
   }
 
   if (looksLikeInferenceKey(cfg.apiKey)) {
-    print(`Inference: SCALATTICE_API_KEY set (…${cfg.apiKey.slice(-4)})`);
-    if (!sessionOk) print('Bracket: scalattice bracket   (the inference key is enough)');
+    lines.push(`Inference: SCALATTICE_API_KEY set (…${cfg.apiKey.slice(-4)})`);
+    if (!sessionOk) lines.push('Bracket: scalattice bracket   (the inference key is enough)');
   } else {
-    print('Inference: no developer key in the environment');
+    lines.push('Inference: no developer key in the environment');
   }
+  return lines.join('\n');
+}
+
+export async function cmdWhoami() {
+  print(await whoamiText());
 }

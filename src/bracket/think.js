@@ -14,8 +14,10 @@ function longestSuffixPrefix(hold, token) {
 
 /** Clone messages and tag the last user turn so Qwen-family templates enable or suppress thinking. */
 export function applyThinkingTag(messages, thinking) {
-  const tag = thinking ? TAG_ON : TAG_OFF;
   const out = (messages || []).map((m) => ({ ...m }));
+  const last = [...out].reverse().find((m) => m.role && m.role !== 'system');
+  const afterTools = last?.role === 'tool' || last?.role === 'function';
+  const tag = thinking && !afterTools ? TAG_ON : TAG_OFF;
   for (let i = out.length - 1; i >= 0; i -= 1) {
     if (out[i].role !== 'user' || typeof out[i].content !== 'string') continue;
     const body = out[i].content.replace(TAG_RE, '').trimEnd();

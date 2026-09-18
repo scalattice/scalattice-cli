@@ -11,9 +11,74 @@ export function inferenceUrl(apiUrl, path) {
   return `${base}/${suffix}`;
 }
 
+function openaiMessages(messages) {
+  return (messages || []).map((m) => {
+    if (!m || typeof m !== 'object') return m;
+    if (m.role === 'assistant' && m.tool_calls?.length) {
+      return {
+        role: 'assistant',
+        content: m.content ?? null,
+        tool_calls: m.tool_calls.map((tc, i) => ({
+          id: String(tc.id || `call_${i + 1}`),
+          type: 'function',
+          function: {
+            name: String(tc.function?.name || ''),
+            arguments:
+              typeof tc.function?.arguments === 'string'
+                ? tc.function.arguments
+                : JSON.stringify(tc.function?.arguments || {}),
+          },
+        })),
+      };
+    }
+    if (m.role === 'tool' || m.role === 'function') {
+      return {
+        role: 'tool',
+        tool_call_id: String(m.tool_call_id || m.id || 'call_1'),
+        content: String(m.content ?? ''),
+      };
+    }
+    return m;
+  });
+}
+
 function emitDelta(onDelta, part) {
   if (!onDelta || !part?.text) return;
   onDelta(part);
+}
+
+function mergeToolField(cur, next) {
+  const a = String(cur || '');
+  const b = String(next || '');
+  if (!b) return a;
+  if (!a) return b;
+  if (a === b) return a;
+  if (b.startsWith(a)) return b;
+  if (a.startsWith(b)) return a;
+  if (a.endsWith(b)) return a;
+  return a + b;
+}
+
+function ingestToolCalls(toolAcc, tcs) {
+  for (const tc of tcs || []) {
+    if (!tc || typeof tc !== 'object') continue;
+    const idx = tc.index ?? toolAcc.size;
+    const cur = toolAcc.get(idx) || {
+      id: tc.id || `call_${idx}`,
+      type: 'function',
+      function: { name: '', arguments: '' },
+    };
+    if (tc.id) cur.id = tc.id;
+    if (tc.function?.name) cur.function.name = mergeToolField(cur.function.name, tc.function.name);
+    if (tc.function?.arguments != null && tc.function.arguments !== '') {
+      const piece =
+        typeof tc.function.arguments === 'string'
+          ? tc.function.arguments
+          : JSON.stringify(tc.function.arguments);
+      cur.function.arguments = mergeToolField(cur.function.arguments, piece);
+    }
+    toolAcc.set(idx, cur);
+  }
 }
 
 async function readSse(res, { onDelta, signal } = {}) {
@@ -25,6 +90,10 @@ async function readSse(res, { onDelta, signal } = {}) {
   const toolAcc = new Map();
   const splitter = createThinkSplitter();
   let sawDone = false;
+  let sawContentDelta = false;
+  let sawReasoningDelta = false;
+  let lastMessage = null;
+  let finishReason = null;
 
   const takeParts = (parts) => {
     for (const part of parts) {
@@ -50,27 +119,17 @@ async function readSse(res, { onDelta, signal } = {}) {
     if (err && typeof err === 'string') throw new Error(err);
     const choice = json.choices?.[0] || {};
     const delta = choice.delta || {};
-    if (delta.reasoning_content) takeParts(splitter.pushThinking(delta.reasoning_content));
-    else if (delta.reasoning) takeParts(splitter.pushThinking(delta.reasoning));
-    if (delta.content) takeParts(splitter.push(delta.content));
-    const finish = choice.message;
-    if (finish?.reasoning_content && !delta.reasoning_content) {
-      takeParts(splitter.pushThinking(finish.reasoning_content));
+    if (choice.message) lastMessage = choice.message;
+    if (delta.reasoning_content || delta.reasoning) {
+      sawReasoningDelta = true;
+      takeParts(splitter.pushThinking(delta.reasoning_content || delta.reasoning));
     }
-    if (finish?.content && !delta.content) takeParts(splitter.push(finish.content));
-    const tcs = delta.tool_calls || [];
-    for (const tc of tcs) {
-      const idx = tc.index ?? 0;
-      const cur = toolAcc.get(idx) || {
-        id: tc.id || `call_${idx}`,
-        type: 'function',
-        function: { name: '', arguments: '' },
-      };
-      if (tc.id) cur.id = tc.id;
-      if (tc.function?.name) cur.function.name += tc.function.name;
-      if (tc.function?.arguments) cur.function.arguments += tc.function.arguments;
-      toolAcc.set(idx, cur);
+    if (delta.content) {
+      sawContentDelta = true;
+      takeParts(splitter.push(delta.content));
     }
+    if (delta.tool_calls?.length) ingestToolCalls(toolAcc, delta.tool_calls);
+    if (choice.finish_reason) finishReason = choice.finish_reason;
   };
 
   while (true) {
@@ -89,12 +148,23 @@ async function readSse(res, { onDelta, signal } = {}) {
     buf = parts.pop() || '';
     for (const raw of parts) {
       const line = raw.replace(/\r$/, '');
-      if (!line.startsWith('data:')) continue;
-      consumeData(line.slice(5));
+      if (line.startsWith('data:')) consumeData(line.slice(5));
+      else if (line.startsWith('{')) consumeData(line);
     }
   }
-  if (buf.trim().startsWith('data:')) consumeData(buf.trim().slice(5));
+  const tail = buf.trim();
+  if (tail.startsWith('data:')) consumeData(tail.slice(5));
+  else if (tail.startsWith('{')) consumeData(tail);
   takeParts(splitter.flush());
+
+  if (!sawContentDelta && !sawReasoningDelta && lastMessage) {
+    if (lastMessage.reasoning_content || lastMessage.reasoning) {
+      takeParts(splitter.pushThinking(lastMessage.reasoning_content || lastMessage.reasoning));
+    }
+    if (lastMessage.content) takeParts(splitter.push(lastMessage.content));
+    takeParts(splitter.flush());
+  }
+  if (lastMessage?.tool_calls?.length) ingestToolCalls(toolAcc, lastMessage.tool_calls);
 
   const tool_calls = [...toolAcc.values()].filter((t) => t.function.name);
   if (!content && !tool_calls.length && !reasoning && !sawDone) {
@@ -103,6 +173,7 @@ async function readSse(res, { onDelta, signal } = {}) {
   const msg = { role: 'assistant', content: content || null };
   if (tool_calls.length) msg.tool_calls = tool_calls;
   if (reasoning) msg.reasoning_content = reasoning;
+  if (finishReason) msg.finish_reason = finishReason;
   return msg;
 }
 
@@ -116,7 +187,7 @@ export async function chatCompletion({
   thinking = true,
   settings,
   temperature = 0.2,
-  max_tokens = 8192,
+  max_tokens = 1024,
   signal,
   onDelta,
 } = {}) {
@@ -124,7 +195,7 @@ export async function chatCompletion({
   const useThink = settings?.thinking !== undefined ? settings.thinking !== false : thinking !== false;
   const body = {
     model,
-    messages: applyThinkingTag(messages, useThink),
+    messages: openaiMessages(applyThinkingTag(messages, useThink)),
     temperature,
     max_tokens,
     stream: useStream,
@@ -140,6 +211,8 @@ export async function chatCompletion({
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
       Accept: useStream ? 'text/event-stream' : 'application/json',
+      'Cache-Control': 'no-cache',
+      'X-Accel-Buffering': 'no',
       ...routingHeaders({ ...(settings || {}), stream: useStream }),
     },
     body: JSON.stringify(body),
@@ -156,8 +229,7 @@ export async function chatCompletion({
     }
     throw new Error(`API ${res.status} ${url}: ${msg}`);
   }
-  const ctype = (res.headers.get('content-type') || '').toLowerCase();
-  if (useStream && res.body && (ctype.includes('event-stream') || ctype.includes('octet-stream') || !ctype.includes('json'))) {
+  if (useStream && res.body) {
     return readSse(res, { onDelta, signal });
   }
   const json = await res.json();
@@ -180,6 +252,8 @@ export async function chatCompletion({
   }
   const out = { ...msg, content: content || msg.content || null };
   if (reasoning) out.reasoning_content = reasoning;
+  const fr = json.choices?.[0]?.finish_reason;
+  if (fr) out.finish_reason = fr;
   return out;
 }
 

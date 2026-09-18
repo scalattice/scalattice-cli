@@ -16,14 +16,14 @@ Sign in from a terminal, land in an interactive CLI, mint an account management 
 ## Install
 
 ```bash
-# Paste-friendly
+# Paste-friendly (installs a local Node runtime if you do not have Node 18+)
 curl -fsSL https://scalattice.cloud/install/cli | sh
 
 # Or with npm (Node 18+)
 npm install -g scalattice-cli
 ```
 
-Or sign in on [Cloud /auth](https://scalattice.cloud/auth) and run the curl command shown there. That stores a session in `~/.config/scalattice/config.json`, signs the browser tab in, installs this CLI if needed, and opens the prompt.
+Or sign in on [Cloud /auth](https://scalattice.cloud/auth) and run the curl command shown there. That stores a session in `~/.config/scalattice/config.json` (or `%APPDATA%\scalattice` on Windows), signs the browser tab in, installs this CLI if needed, and opens the prompt.
 
 ## Quick start
 
@@ -94,7 +94,7 @@ Inside the prompt, drop the `scalattice` prefix. From a normal terminal, keep it
 
 `developer`/`developers`, `provider`/`providers`, `machine`/`machines`, and `key`/`keys` are aliases.
 
-Config: `~/.config/scalattice/config.json` (mode `0600`) — session + email only. Keys are never written there. Bracket may store its own inference key at `~/.config/scalattice/bracket.key` (also `0600`).
+Config: `~/.config/scalattice/config.json` (mode `0600`): session + email only. Keys are never written there. Bracket may store its own inference key at `~/.config/scalattice/bracket.key` (also `0600`).
 
 Env overrides: `SCALATTICE_CLOUD_URL`, `SCALATTICE_API_URL`, `SCALATTICE_API_KEY`, `SCALATTICE_MGMT_KEY`, `SCALATTICE_SESSION_TOKEN`, `SCALATTICE_BRACKET_MODEL`, `SCALATTICE_STREAM`, `SCALATTICE_THINKING`, `SCALATTICE_REGION`, `SCALATTICE_VET_REPLICAS`, `SCALATTICE_SECURITY`, `SCALATTICE_NO_UPDATE`.
 
@@ -116,7 +116,9 @@ Login is enough: Bracket mints a **developer inference key** (`slt_…`) named `
 
 Streaming is on by default and sends `X-Scalattice-Vet-Replicas: 1` plus `X-Scalattice-Security: tier1` (required by the API). Thinking is on by default. Toggle with `--no-stream`, `--no-think`, `--region auto|us|eu|ap`, `--vet 1|2|3`, `--security tier1|tier2.5`, or the matching slash commands. Multi-vet or `tier2.5` turns streaming off.
 
-Inside the prompt: `/help` lists commands; `/help stream` (or region, vet, settings, …) explains one. `/settings` prints labeled inference options. `/clear` `/compact` `/model` `/yolo` `/credits` `/whoami`. Shell and file writes ask before running unless you pass `--yolo` (also `--auto` / `--dangerously-skip-permissions`).
+Inside the prompt: `/help` lists commands; `/help stream` (or region, vet, settings, chats) explains one. `/settings` prints labeled inference options. `/chats` lists saved conversations; `/chat 2` switches; `/new` starts a blank one. `/clear` `/compact` `/model` `/yolo` `/credits` `/whoami`. Shell and file writes ask before running unless you pass `--yolo` (also `--auto` / `--dangerously-skip-permissions`).
+
+Chats are stored locally under `~/.local/share/scalattice/bracket-sessions/` (or `%LOCALAPPDATA%\scalattice\bracket-sessions` on Windows). `--continue` resumes the last chat in this workspace.
 
 `--print` is one-shot (CI / scripts) and does not open the TUI. Writes and shell still need `--yolo` when stdin is not a TTY.
 
