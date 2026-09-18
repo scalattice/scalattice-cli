@@ -28,6 +28,10 @@ test('scalattice bracket --help names Bracket', () => {
   assert.match(r.stdout, /coding harness/);
   assert.doesNotMatch(r.stdout, /scalattice-agent/);
   assert.match(r.stdout, /--yolo/);
+  assert.match(r.stdout, /--stream/);
+  assert.match(r.stdout, /--think/);
+  assert.match(r.stdout, /--region/);
+  assert.match(r.stdout, /\/settings/);
 });
 
 test('banner names Scalattice Bracket and can show credits', async () => {
@@ -38,12 +42,36 @@ test('banner names Scalattice Bracket and can show credits', async () => {
     yolo: false,
     email: 'dev@example.com',
     credits: ['Wallet $12.34 · spent $1.00', 'qwen-3-coder-30b-a3b unlimited'],
+    policy: 'stream · think · auto · vet 1 · tier1',
   });
   assert.match(text, /Scalattice Bracket/);
   assert.match(text, /\/tmp\/ws/);
   assert.match(text, /dev@example.com/);
   assert.match(text, /Wallet \$12\.34/);
+  assert.match(text, /stream · think · auto · vet 1 · tier1/);
   assert.doesNotMatch(text, /coding harness/);
+});
+
+test('intro stays a fixed block above the transcript', async () => {
+  const { renderIntro, introRowCount } = await import('./tui.js');
+  const meta = { cwd: '/tmp/ws', model: 'qwen-3-coder-30b-a3b', yolo: false };
+  const intro = renderIntro(meta);
+  assert.match(intro, /Scalattice Bracket/);
+  assert.match(intro, /Ask about this workspace/);
+  assert.equal(introRowCount(meta), intro.split('\n').length);
+  assert.ok(introRowCount(meta) >= 6);
+});
+
+test('thinking is guttered italic, not plain assistant text', async () => {
+  const { thinkDeltaToAnsi } = await import('./tui.js');
+  const first = thinkDeltaToAnsi('plan the edit', {}, { width: 40 });
+  assert.match(first.text, /┊ think/);
+  assert.match(first.text, /┊ /);
+  assert.match(first.text, /plan the edit/);
+  assert.doesNotMatch(first.text, /\[ \]/);
+  const next = thinkDeltaToAnsi('\nmore', first.state, { width: 40 });
+  assert.match(next.text, /┊ /);
+  assert.match(next.text, /more/);
 });
 
 test('backet is a typo alias for bracket --help', () => {

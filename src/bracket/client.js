@@ -1,95 +1,105 @@
-import { parseFallbackToolCalls } from './xmlTools.js';
+import { routingHeaders } from './settings.js';
+import { applyThinkingTag, createThinkSplitter } from './think.js';
 
-function apiError(res, data) {
-  const msg =
-    data?.error?.message || data?.error || data?.message || `HTTP ${res.status}`;
-  const err = new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
-  err.status = res.status;
-  err.data = data;
-  return err;
+function apiBase(apiUrl) {
+  return String(apiUrl || 'https://api.scalattice.com').replace(/\/$/, '');
 }
 
-async function parseJsonBody(res) {
-  const text = await res.text();
-  if (!text) return {};
-  try {
-    return JSON.parse(text);
-  } catch {
-    return { error: text.slice(0, 400) };
-  }
-}
-
-function emptyAssistant() {
-  return { role: 'assistant', content: '', tool_calls: [] };
-}
-
-function mergeToolDelta(message, deltaCalls) {
-  if (!Array.isArray(deltaCalls)) return;
-  for (const part of deltaCalls) {
-    const idx = Number.isInteger(part.index) ? part.index : message.tool_calls.length;
-    if (!message.tool_calls[idx]) {
-      message.tool_calls[idx] = {
-        id: part.id || `call_${idx + 1}`,
-        type: 'function',
-        function: { name: part.function?.name || '', arguments: '' },
-      };
-    }
-    const slot = message.tool_calls[idx];
-    if (part.id) slot.id = part.id;
-    if (part.function?.name) slot.function.name += part.function.name;
-    if (part.function?.arguments) slot.function.arguments += part.function.arguments;
-  }
-}
-
-function finalizeAssistant(message) {
-  const tool_calls = (message.tool_calls || []).filter((c) => c && c.function?.name);
-  if (!tool_calls.length) {
-    const fallback = parseFallbackToolCalls(message.content);
-    if (fallback.length) {
-      return { role: 'assistant', content: message.content || '', tool_calls: fallback };
-    }
-    return { role: 'assistant', content: message.content || '' };
-  }
-  const out = { role: 'assistant', content: message.content || null, tool_calls };
-  if (!out.content) out.content = null;
-  return out;
+function emitDelta(onDelta, part) {
+  if (!onDelta || !part?.text) return;
+  onDelta(part);
 }
 
 async function readSse(res, { onDelta, signal } = {}) {
-  const message = emptyAssistant();
   const reader = res.body.getReader();
-  const decoder = new TextDecoder();
+  const dec = new TextDecoder();
   let buf = '';
+  let content = '';
+  let reasoning = '';
+  const toolAcc = new Map();
+  const splitter = createThinkSplitter();
+  let sawDone = false;
+
+  const takeParts = (parts) => {
+    for (const part of parts) {
+      if (part.type === 'thinking') reasoning += part.text;
+      else content += part.text;
+      emitDelta(onDelta, part);
+    }
+  };
+
+  const consumeData = (data) => {
+    const line = data.trim();
+    if (!line || line === '[DONE]') {
+      if (line === '[DONE]') sawDone = true;
+      return;
+    }
+    let json;
+    try {
+      json = JSON.parse(line);
+    } catch {
+      return;
+    }
+    const err = json.error?.message || json.error;
+    if (err && typeof err === 'string') throw new Error(err);
+    const choice = json.choices?.[0] || {};
+    const delta = choice.delta || {};
+    if (delta.reasoning_content) takeParts(splitter.pushThinking(delta.reasoning_content));
+    else if (delta.reasoning) takeParts(splitter.pushThinking(delta.reasoning));
+    if (delta.content) takeParts(splitter.push(delta.content));
+    const finish = choice.message;
+    if (finish?.reasoning_content && !delta.reasoning_content) {
+      takeParts(splitter.pushThinking(finish.reasoning_content));
+    }
+    if (finish?.content && !delta.content) takeParts(splitter.push(finish.content));
+    const tcs = delta.tool_calls || [];
+    for (const tc of tcs) {
+      const idx = tc.index ?? 0;
+      const cur = toolAcc.get(idx) || {
+        id: tc.id || `call_${idx}`,
+        type: 'function',
+        function: { name: '', arguments: '' },
+      };
+      if (tc.id) cur.id = tc.id;
+      if (tc.function?.name) cur.function.name += tc.function.name;
+      if (tc.function?.arguments) cur.function.arguments += tc.function.arguments;
+      toolAcc.set(idx, cur);
+    }
+  };
+
   while (true) {
-    if (signal?.aborted) throw new Error('Aborted');
+    if (signal?.aborted) {
+      try {
+        await reader.cancel();
+      } catch {
+        /* ignore */
+      }
+      throw new Error('aborted');
+    }
     const { done, value } = await reader.read();
     if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    const chunks = buf.split('\n');
-    buf = chunks.pop() || '';
-    for (const line of chunks) {
-      const trimmed = line.trim();
-      if (!trimmed.startsWith('data:')) continue;
-      const payload = trimmed.slice(5).trim();
-      if (!payload || payload === '[DONE]') continue;
-      let json;
-      try {
-        json = JSON.parse(payload);
-      } catch {
-        continue;
-      }
-      const delta = json.choices?.[0]?.delta || {};
-      if (typeof delta.content === 'string' && delta.content) {
-        message.content += delta.content;
-        onDelta?.(delta.content);
-      }
-      if (delta.tool_calls) mergeToolDelta(message, delta.tool_calls);
+    buf += dec.decode(value, { stream: true });
+    const parts = buf.split('\n');
+    buf = parts.pop() || '';
+    for (const raw of parts) {
+      const line = raw.replace(/\r$/, '');
+      if (!line.startsWith('data:')) continue;
+      consumeData(line.slice(5));
     }
   }
-  return finalizeAssistant(message);
+  if (buf.trim().startsWith('data:')) consumeData(buf.trim().slice(5));
+  takeParts(splitter.flush());
+
+  const tool_calls = [...toolAcc.values()].filter((t) => t.function.name);
+  if (!content && !tool_calls.length && !reasoning && !sawDone) {
+    throw new Error('empty stream');
+  }
+  const msg = { role: 'assistant', content: content || null };
+  if (tool_calls.length) msg.tool_calls = tool_calls;
+  if (reasoning) msg.reasoning_content = reasoning;
+  return msg;
 }
 
-/** OpenAI-compatible chat completions against Scalattice `/v1`. */
 export async function chatCompletion({
   apiUrl,
   apiKey,
@@ -97,62 +107,84 @@ export async function chatCompletion({
   tools,
   model,
   stream = true,
+  thinking = true,
+  settings,
   temperature = 0.2,
   max_tokens = 8192,
   signal,
   onDelta,
 } = {}) {
-  const base = String(apiUrl || '').replace(/\/+$/, '');
-  const url = `${base}/chat/completions`;
+  const useStream = settings?.stream !== undefined ? settings.stream !== false : stream !== false;
+  const useThink = settings?.thinking !== undefined ? settings.thinking !== false : thinking !== false;
   const body = {
     model,
-    messages,
+    messages: applyThinkingTag(messages, useThink),
     temperature,
     max_tokens,
-    stream,
+    stream: useStream,
   };
   if (tools?.length) {
     body.tools = tools;
     body.tool_choice = 'auto';
   }
-
-  const res = await fetch(url, {
+  const res = await fetch(`${apiBase(apiUrl)}/v1/chat/completions`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
-      Accept: stream ? 'text/event-stream' : 'application/json',
+      Accept: useStream ? 'text/event-stream' : 'application/json',
+      ...routingHeaders({ ...(settings || {}), stream: useStream }),
     },
     body: JSON.stringify(body),
     signal,
   });
-
   if (!res.ok) {
-    throw apiError(res, await parseJsonBody(res));
+    const t = await res.text().catch(() => '');
+    let msg = t.slice(0, 800);
+    try {
+      const j = JSON.parse(t);
+      msg = j.error?.message || j.message || msg;
+    } catch {
+      /* keep */
+    }
+    throw new Error(`API ${res.status}: ${msg}`);
   }
-
-  if (stream && res.body) {
+  const ctype = (res.headers.get('content-type') || '').toLowerCase();
+  if (useStream && res.body && (ctype.includes('event-stream') || ctype.includes('octet-stream') || !ctype.includes('json'))) {
     return readSse(res, { onDelta, signal });
   }
-
-  const data = await parseJsonBody(res);
-  const choice = data.choices?.[0]?.message || {};
-  return finalizeAssistant({
-    role: 'assistant',
-    content: choice.content || '',
-    tool_calls: choice.tool_calls || [],
-  });
+  const json = await res.json();
+  if (json.error) throw new Error(json.error.message || JSON.stringify(json.error));
+  const msg = json.choices?.[0]?.message;
+  if (!msg) throw new Error('empty completion');
+  const splitter = createThinkSplitter();
+  const parts = [
+    ...(msg.reasoning_content ? splitter.pushThinking(msg.reasoning_content) : []),
+    ...(msg.reasoning ? splitter.pushThinking(msg.reasoning) : []),
+    ...(msg.content ? splitter.push(msg.content) : []),
+    ...splitter.flush(),
+  ];
+  let content = '';
+  let reasoning = '';
+  for (const part of parts) {
+    if (part.type === 'thinking') reasoning += part.text;
+    else content += part.text;
+    emitDelta(onDelta, part);
+  }
+  const out = { ...msg, content: content || msg.content || null };
+  if (reasoning) out.reasoning_content = reasoning;
+  return out;
 }
 
-export async function listModelIds({ apiUrl, apiKey, signal } = {}) {
-  const base = String(apiUrl || '').replace(/\/+$/, '');
-  const res = await fetch(`${base}/models`, {
-    method: 'GET',
-    headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
-    signal,
+export async function listModels({ apiUrl, apiKey } = {}) {
+  const res = await fetch(`${apiBase(apiUrl)}/v1/models`, {
+    headers: { Authorization: `Bearer ${apiKey}` },
   });
-  const data = await parseJsonBody(res);
-  if (!res.ok) throw apiError(res, data);
-  const rows = data.data || data.models || [];
-  return rows.map((m) => m.id || m.name).filter(Boolean);
+  if (!res.ok) throw new Error(`models ${res.status}`);
+  const json = await res.json();
+  return (json.data || []).map((m) => m.id).filter(Boolean);
+}
+
+export async function listModelIds(opts) {
+  return listModels(opts);
 }

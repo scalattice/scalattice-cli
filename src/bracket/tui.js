@@ -5,14 +5,21 @@ import { stdin as input, stdout as output } from 'node:process';
 
 const CYAN = '\x1b[38;2;34;211;238m';
 const VIOLET = '\x1b[38;2;167;139;250m';
+const THINK = '\x1b[38;2;196;181;253m';
+const THINK_DIM = '\x1b[38;2;139;122;184m';
 const MUTED = '\x1b[38;2;148;163;184m';
 const TEXT = '\x1b[38;2;226;232;240m';
 const RED = '\x1b[38;2;248;113;113m';
 const RESET = '\x1b[0m';
 const BOLD = '\x1b[1m';
+const DIM = '\x1b[2m';
+const ITALIC = '\x1b[3m';
 const PASTE_ON = '\x1b[?2004h';
 const PASTE_OFF = '\x1b[?2004l';
 const SHOW = '\x1b[?25h';
+const ALT_ON = '\x1b[?1049h';
+const ALT_OFF = '\x1b[?1049l';
+const THINK_GUTTER = '  ┊ ';
 
 const tty = () => Boolean(input.isTTY && output.isTTY);
 
@@ -33,6 +40,10 @@ function width() {
   return Math.max(40, Math.min(output.columns || 80, 100));
 }
 
+function rows() {
+  return Math.max(12, output.rows || 24);
+}
+
 function strip(s) {
   return String(s).replace(/\x1b\[[0-9;]*m/g, '');
 }
@@ -51,7 +62,7 @@ function row(w, inner) {
   return `│ ${text}${' '.repeat(pad)} │`;
 }
 
-export function renderBanner({ cwd, model, yolo, version = pkgVersion(), email, credits = [] } = {}) {
+export function renderBanner({ cwd, model, yolo, version = pkgVersion(), email, credits = [], policy } = {}) {
   const w = width();
   const ver = version ? ` v${version}` : '';
   const mode = yolo ? 'yolo' : 'approvals on';
@@ -62,12 +73,75 @@ export function renderBanner({ cwd, model, yolo, version = pkgVersion(), email, 
     row(w, paint(MUTED, cwd || process.cwd())),
     row(w, paint(MUTED, `${model} · ${mode}`)),
   ];
+  if (policy) lines.push(row(w, paint(MUTED, policy)));
   if (email) lines.push(row(w, paint(MUTED, email)));
   for (const line of credits) {
     if (line) lines.push(row(w, paint(MUTED, line)));
   }
   lines.push(hline(w, '╰', '─', '╯'));
   return lines.join('\n');
+}
+
+export function renderIntro(meta = {}) {
+  const banner = renderBanner(meta);
+  const hint = `  ${paint(MUTED, 'Ask about this workspace. /help  /exit  /settings  /stream  /think  /credits')}`;
+  return `${banner}\n\n${hint}`;
+}
+
+export function introRowCount(meta = {}) {
+  return renderIntro(meta).split('\n').length;
+}
+
+/** Stream thinking into italic guttered lines. `state` is mutated across chunks. */
+export function thinkDeltaToAnsi(text, state = {}, opts = {}) {
+  const limit = Math.max(16, (opts.width || width()) - THINK_GUTTER.length - 2);
+  const next = {
+    open: Boolean(state.open),
+    col: Number(state.col) || 0,
+    lineStart: state.lineStart !== false,
+  };
+  let out = '';
+  const body = (s) => paint(`${ITALIC}${DIM}${THINK}`, s);
+  const gut = () => paint(`${DIM}${THINK_DIM}`, THINK_GUTTER);
+
+  if (!next.open) {
+    out += `\n${paint(`${ITALIC}${DIM}${THINK_DIM}`, `${THINK_GUTTER}think`)}\n`;
+    next.open = true;
+    next.lineStart = true;
+    next.col = 0;
+  }
+
+  let run = '';
+  const flush = () => {
+    if (!run) return;
+    if (next.lineStart) {
+      out += gut();
+      next.lineStart = false;
+    }
+    out += body(run);
+    run = '';
+  };
+
+  for (const ch of String(text || '')) {
+    if (ch === '\r') continue;
+    if (ch === '\n') {
+      flush();
+      out += '\n';
+      next.lineStart = true;
+      next.col = 0;
+      continue;
+    }
+    if (next.col >= limit) {
+      flush();
+      out += '\n';
+      next.lineStart = true;
+      next.col = 0;
+    }
+    run += ch;
+    next.col += 1;
+  }
+  flush();
+  return { text: out, state: next };
 }
 
 function renderInput(w, value) {
@@ -96,9 +170,51 @@ export function createTui() {
   let pasting = false;
   let lineBuf = '';
   let waiter = null;
+  let thinkOpen = false;
+  let wrotePrefix = false;
+  let thinkState = { open: false, col: 0, lineStart: true };
+  let bannerMeta = null;
+  let scrollTop = 2;
+  let alive = false;
 
   function write(s) {
     output.write(s);
+  }
+
+  function layoutTop(meta) {
+    const total = rows();
+    const intro = introRowCount(meta);
+    return Math.min(intro + 2, Math.max(3, total - 5));
+  }
+
+  function paintHeader({ resetCursor = false } = {}) {
+    if (!bannerMeta || !tty()) return;
+    const intro = renderIntro(bannerMeta);
+    const lines = intro.split('\n');
+    scrollTop = layoutTop(bannerMeta);
+    const bottom = rows();
+    if (!resetCursor) write('\x1b7');
+    write('\x1b[?6l\x1b[r\x1b[H');
+    for (const line of lines) {
+      write(`\x1b[2K${line}\r\n`);
+    }
+    write('\x1b[2K\r\n');
+    write(`\x1b[${scrollTop};${bottom}r`);
+    if (resetCursor) write(`\x1b[${scrollTop};1H`);
+    else write('\x1b8');
+  }
+
+  function onResize() {
+    if (!alive || !bannerMeta) return;
+    paintHeader({ resetCursor: false });
+  }
+
+  function closeThink() {
+    if (!thinkOpen) return;
+    if (!thinkState.lineStart) write('\n');
+    write('\n');
+    thinkOpen = false;
+    thinkState = { open: false, col: 0, lineStart: true };
   }
 
   function finishWait(fn) {
@@ -164,26 +280,45 @@ export function createTui() {
   return {
     enter() {
       if (!tty()) return;
+      alive = true;
       if (typeof input.setRawMode === 'function') {
         input.setRawMode(true);
         raw = true;
       }
       input.resume();
       input.setEncoding('utf8');
-      write(PASTE_ON + SHOW);
+      write(ALT_ON + PASTE_ON + SHOW);
+      write('\x1b[2J\x1b[H');
       input.on('data', onData);
+      output.on('resize', onResize);
     },
     leave() {
+      alive = false;
+      output.off('resize', onResize);
       input.off('data', onData);
-      write(PASTE_OFF + SHOW);
+      write('\x1b[r');
+      write(PASTE_OFF + SHOW + ALT_OFF);
       if (raw && typeof input.setRawMode === 'function') {
         input.setRawMode(false);
         raw = false;
       }
     },
     banner(meta) {
-      write(`\x1b[2J\x1b[H${renderBanner(meta)}\n`);
-      write(`\n  ${paint(MUTED, 'Ask about this workspace. /help  /exit  /model  /yolo  /credits')}\n`);
+      bannerMeta = { ...(meta || {}) };
+      if (!tty()) {
+        write(`${renderIntro(bannerMeta)}\n\n`);
+        return;
+      }
+      paintHeader({ resetCursor: true });
+    },
+    updateBanner(patch = {}) {
+      if (!bannerMeta) return;
+      bannerMeta = { ...bannerMeta, ...patch };
+      paintHeader({ resetCursor: false });
+    },
+    clearTranscript() {
+      if (!tty()) return;
+      write(`\x1b[${scrollTop};1H\x1b[J`);
     },
     note(s) {
       write(`  ${paint(MUTED, s)}\n`);
@@ -192,12 +327,32 @@ export function createTui() {
       write(`\n${paint(CYAN, `${BOLD}you`)}  ${s}\n`);
     },
     startAssistant() {
-      write(`\n${paint(VIOLET, `${BOLD}[ ]`)}  `);
+      closeThink();
+      wrotePrefix = false;
+      write('\n');
+    },
+    writeDelta(part) {
+      const p = typeof part === 'string' ? { type: 'content', text: part } : part;
+      if (!p?.text) return;
+      if (p.type === 'thinking') {
+        const painted = thinkDeltaToAnsi(p.text, thinkState, { width: width() });
+        thinkState = painted.state;
+        thinkOpen = true;
+        write(painted.text);
+        return;
+      }
+      closeThink();
+      if (!wrotePrefix) {
+        write(`${paint(VIOLET, `${BOLD}[ ]`)}  `);
+        wrotePrefix = true;
+      }
+      write(p.text);
     },
     writeAssistant(chunk) {
-      write(chunk);
+      this.writeDelta(typeof chunk === 'string' ? { type: 'content', text: chunk } : chunk);
     },
     endAssistant() {
+      closeThink();
       write('\n');
     },
     tool(summary) {
