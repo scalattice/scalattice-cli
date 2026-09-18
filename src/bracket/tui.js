@@ -220,14 +220,43 @@ export function wrapLine(text, maxW) {
   let vis = 0;
   let buf = '';
   let sgr = '';
+  let oscHref = '';
   let i = 0;
+  const oscOpen = (uri) => (uri ? `\x1b]8;;${uri}\x1b\\` : '');
+  const oscClose = '\x1b]8;;\x1b\\';
   const emit = () => {
+    if (oscHref) buf += oscClose;
     lines.push(buf);
-    buf = sgr;
+    buf = `${oscOpen(oscHref)}${sgr}`;
     vis = 0;
   };
   while (i < s.length) {
     if (s[i] === '\x1b') {
+      if (s.startsWith('\x1b]8;', i)) {
+        let j = i + 4;
+        let end = s.length;
+        let term = 0;
+        while (j < s.length) {
+          if (s[j] === '\x07') {
+            end = j;
+            term = 1;
+            break;
+          }
+          if (s[j] === '\x1b' && s[j + 1] === '\\') {
+            end = j;
+            term = 2;
+            break;
+          }
+          j += 1;
+        }
+        const seq = s.slice(i, end + term);
+        const body = s.slice(i + 4, end);
+        const semi = body.indexOf(';');
+        oscHref = semi === -1 ? '' : body.slice(semi + 1);
+        buf += seq;
+        i += seq.length;
+        continue;
+      }
       const rest = s.slice(i);
       const m = rest.match(/^\x1b\[[0-9;]*m/) || rest.match(/^\x1b\[[0-9;]*[A-Za-z]/);
       const seq = m ? m[0] : rest.slice(0, 2);

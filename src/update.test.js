@@ -3,7 +3,15 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { applyUpdate, checkForUpdate, cmpSemver, maybeAutoUpdate, npmPrefixFromPkgRoot } from './update.js';
+import {
+  applyUpdate,
+  checkForUpdate,
+  cmpSemver,
+  maybeAutoUpdate,
+  npmPrefixFromPkgRoot,
+  resolveNpm,
+  rewritePortableWrappers,
+} from './update.js';
 
 test('cmpSemver orders dotted versions', () => {
   assert.equal(cmpSemver('0.3.3', '0.3.2'), 1);
@@ -122,4 +130,120 @@ test('checkForUpdate caches the registry lookup', async () => {
 
 test('applyUpdate refuses a non-npm checkout', async () => {
   await assert.rejects(() => applyUpdate({ install() {}, relaunch() {} }), /not an npm install/);
+});
+
+test('resolveNpm prefers the Node-bundled npm-cli.js', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slt-npm-'));
+  try {
+    const execPath = path.join(dir, 'node.exe');
+    const cliJs = path.join(dir, 'node_modules', 'npm', 'bin', 'npm-cli.js');
+    fs.mkdirSync(path.dirname(cliJs), { recursive: true });
+    fs.writeFileSync(execPath, '');
+    fs.writeFileSync(cliJs, '');
+    const npm = resolveNpm(execPath, 'win32');
+    assert.equal(npm.command, execPath);
+    assert.deepEqual(npm.args, [cliJs]);
+    assert.equal(npm.shell, false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('resolveNpm falls back to npm.cmd with a shell on Windows', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slt-npm-'));
+  try {
+    const execPath = path.join(dir, 'node.exe');
+    const cmd = path.join(dir, 'npm.cmd');
+    fs.writeFileSync(execPath, '');
+    fs.writeFileSync(cmd, '');
+    const npm = resolveNpm(execPath, 'win32');
+    assert.equal(npm.command, cmd);
+    assert.deepEqual(npm.args, []);
+    assert.equal(npm.shell, true);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('resolveNpm on unix uses nvm/Homebrew npm-cli.js without a shell', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slt-npm-unix-'));
+  try {
+    const bin = path.join(dir, 'bin');
+    const execPath = path.join(bin, 'node');
+    const cliJs = path.join(dir, 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js');
+    fs.mkdirSync(bin, { recursive: true });
+    fs.mkdirSync(path.dirname(cliJs), { recursive: true });
+    fs.writeFileSync(execPath, '');
+    fs.writeFileSync(cliJs, '');
+    for (const platform of ['linux', 'darwin']) {
+      const npm = resolveNpm(execPath, platform);
+      assert.equal(npm.command, execPath);
+      assert.deepEqual(npm.args, [cliJs]);
+      assert.equal(npm.shell, false);
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('resolveNpm on unix falls back to npm without a shell', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slt-npm-unix-'));
+  try {
+    const execPath = path.join(dir, 'node');
+    fs.writeFileSync(execPath, '');
+    const npm = resolveNpm(execPath, 'linux');
+    assert.equal(npm.command, 'npm');
+    assert.deepEqual(npm.args, []);
+    assert.equal(npm.shell, false);
+    const mac = resolveNpm(execPath, 'darwin');
+    assert.equal(mac.command, 'npm');
+    assert.equal(mac.shell, false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('rewritePortableWrappers is a no-op on linux and macos', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slt-wrap-unix-'));
+  try {
+    const nodeHome = path.join(dir, 'runtime', 'node', 'bin');
+    const cli = path.join(dir, 'lib', 'node_modules', 'scalattice-cli', 'bin', 'scalattice.js');
+    fs.mkdirSync(nodeHome, { recursive: true });
+    fs.mkdirSync(path.dirname(cli), { recursive: true });
+    const execPath = path.join(nodeHome, 'node');
+    fs.writeFileSync(execPath, '');
+    fs.writeFileSync(cli, '');
+    assert.equal(rewritePortableWrappers(dir, { execPath, platform: 'linux' }), false);
+    assert.equal(rewritePortableWrappers(dir, { execPath, platform: 'darwin' }), false);
+    assert.equal(fs.existsSync(path.join(dir, 'scalattice')), false);
+    assert.equal(fs.existsSync(path.join(dir, 'bin', 'scalattice')), false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('rewritePortableWrappers restores Windows shims for the private runtime', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slt-wrap-'));
+  try {
+    const nodeHome = path.join(dir, 'runtime', 'node');
+    const cli = path.join(dir, 'node_modules', 'scalattice-cli', 'bin', 'scalattice.js');
+    fs.mkdirSync(nodeHome, { recursive: true });
+    fs.mkdirSync(path.dirname(cli), { recursive: true });
+    const execPath = path.join(nodeHome, 'node.exe');
+    fs.writeFileSync(execPath, '');
+    fs.writeFileSync(cli, '');
+    assert.equal(rewritePortableWrappers(dir, { execPath, platform: 'win32' }), true);
+    const cmd = fs.readFileSync(path.join(dir, 'scalattice.cmd'), 'utf8');
+    assert.match(cmd, /@echo off/);
+    assert.match(cmd, /node\.exe/);
+    assert.match(cmd, /scalattice\.js/);
+    const sh = fs.readFileSync(path.join(dir, 'scalattice'), 'utf8');
+    assert.match(sh, /#!/);
+    assert.equal(
+      rewritePortableWrappers(dir, { execPath: path.join(dir, 'elsewhere', 'node'), platform: 'win32' }),
+      false
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

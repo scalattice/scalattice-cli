@@ -102,11 +102,55 @@ function prefixWritable(prefix) {
   }
 }
 
-export function defaultInstall(prefix, { inherit = false } = {}) {
-  const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-  const bundled = path.join(path.dirname(process.execPath), npm);
-  const bin = fs.existsSync(bundled) ? bundled : npm;
+export function resolveNpm(execPath = process.execPath, platform = process.platform) {
+  const dir = path.dirname(execPath);
+  const cliJs = [
+    path.join(dir, 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+    path.join(dir, '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+  ].find((p) => fs.existsSync(p));
+  if (cliJs) {
+    return { command: execPath, args: [cliJs], shell: false };
+  }
+  const script = platform === 'win32' ? 'npm.cmd' : 'npm';
+  const bundled = path.join(dir, script);
+  const command = fs.existsSync(bundled) ? bundled : script;
+  return { command, args: [], shell: platform === 'win32' };
+}
+
+function posixPath(p) {
+  return path.resolve(p).replace(/\\/g, '/');
+}
+
+export function rewritePortableWrappers(prefix, { execPath = process.execPath, platform = process.platform } = {}) {
+  if (platform !== 'win32' || !prefix) return false;
+  const nodeHome = path.dirname(execPath);
+  const portable = path.join(prefix, 'runtime', 'node');
+  const resolved = path.resolve(nodeHome);
+  if (resolved !== path.resolve(portable) && resolved !== path.resolve(portable, 'bin')) {
+    return false;
+  }
+  const cli = [
+    path.join(prefix, 'node_modules', 'scalattice-cli', 'bin', 'scalattice.js'),
+    path.join(prefix, 'lib', 'node_modules', 'scalattice-cli', 'bin', 'scalattice.js'),
+  ].find((p) => fs.existsSync(p));
+  if (!cli) return false;
+  const node = path.resolve(execPath);
+  const cliAbs = path.resolve(cli);
+  fs.writeFileSync(
+    path.join(prefix, 'scalattice.cmd'),
+    `@echo off\r\nsetlocal\r\nset "PATH=${path.resolve(nodeHome)};%PATH%"\r\n"${node}" "${cliAbs}" %*\r\n`
+  );
+  fs.writeFileSync(
+    path.join(prefix, 'scalattice'),
+    `#!/bin/sh\nexport PATH="${posixPath(nodeHome)}:$PATH"\nexec "${posixPath(node)}" "${posixPath(cliAbs)}" "$@"\n`
+  );
+  return true;
+}
+
+export function defaultInstall(prefix, { inherit = false, execPath = process.execPath, platform = process.platform } = {}) {
+  const npm = resolveNpm(execPath, platform);
   const args = [
+    ...npm.args,
     'install',
     '-g',
     '--no-fund',
@@ -116,19 +160,22 @@ export function defaultInstall(prefix, { inherit = false } = {}) {
     prefix,
     `${PKG_NAME}@latest`,
   ];
-  const r = spawnSync(bin, args, {
+  const r = spawnSync(npm.command, args, {
     encoding: 'utf8',
     timeout: 120_000,
     stdio: inherit ? 'inherit' : ['ignore', 'pipe', 'pipe'],
+    shell: npm.shell,
+    windowsHide: true,
     env: {
       ...process.env,
-      PATH: `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH || ''}`,
+      PATH: `${path.dirname(execPath)}${path.delimiter}${process.env.PATH || ''}`,
     },
   });
-  if (r.status !== 0) {
-    const err = String(r.stderr || r.stdout || 'npm install failed').trim().slice(0, 600);
-    throw new Error(err || 'npm install failed');
+  if (r.error || r.status !== 0) {
+    const err = String(r.error?.message || r.stderr || r.stdout || '').trim().slice(0, 600);
+    throw new Error(err || `npm install failed (${r.status})`);
   }
+  rewritePortableWrappers(prefix, { execPath, platform });
 }
 
 export function defaultRelaunch(argv) {

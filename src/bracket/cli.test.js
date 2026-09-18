@@ -123,6 +123,14 @@ test('transcript wrap and history window keep older lines reachable', async () =
   assert.equal(painted.length, 2);
   assert.match(painted[0], /hel/);
   assert.match(painted[1], /lo/);
+  const href = 'https://ex.com/cli';
+  const linked = `\x1b]8;;${href}\x1b\\${href}\x1b]8;;\x1b\\`;
+  const wrapped = wrapLine(linked, 10);
+  assert.ok(wrapped.length >= 2);
+  assert.equal(wrapped[0].includes('\x1b]8;;https://ex.com/cli\x1b\\'), true);
+  assert.equal(wrapped[0].endsWith('\x1b]8;;\x1b\\'), true);
+  assert.match(wrapped[1], /^\x1b\]8;;https:\/\/ex\.com\/cli\x1b\\/);
+  assert.equal(wrapped.join('').replace(/\x1b\]8;[^\x07\x1b]*(?:\x07|\x1b\\)/g, ''), href);
   const win = historyWindow(['a', 'b', 'c', 'd'], 2, 1);
   assert.deepEqual(win.slice, ['b', 'c']);
   assert.equal(win.offset, 1);
