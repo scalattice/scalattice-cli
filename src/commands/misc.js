@@ -3,6 +3,7 @@ import { loadConfig } from '../config.js';
 import { print } from '../io.js';
 import { authedFetch, requireCloudAuth } from './mgmt.js';
 import { looksLikeInferenceKey, probeSession } from '../session.js';
+import { localVersion } from '../update.js';
 
 function usd(n) {
   const v = Number(n);
@@ -112,6 +113,7 @@ export async function cmdInit() {
 
 export async function cmdWhoami() {
   const cfg = loadConfig();
+  print(`CLI:     ${localVersion() || 'unknown'}`);
   print(`Cloud:   ${cfg.cloudUrl}`);
   print(`API:     ${cfg.apiUrl}`);
   print(`Email:   ${cfg.email || '(not signed in)'}`);

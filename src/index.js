@@ -26,6 +26,7 @@ import {
 } from './commands/provider.js';
 import { runMcpServer } from './commands/mcp.js';
 import { cmdBracket, BRACKET_HELP } from './bracket/index.js';
+import { cmdUpdate, maybeAutoUpdate } from './update.js';
 import { print, setPromptInterface } from './io.js';
 import { configPath, loadConfig } from './config.js';
 import readline from 'node:readline/promises';
@@ -43,6 +44,7 @@ Usage:
   scalattice init
   scalattice credits
   scalattice whoami
+  scalattice update
   scalattice mcp
   scalattice bracket ["prompt"] [--yolo] [--print] [--model ID] [--no-stream] [--no-think]
 
@@ -76,15 +78,20 @@ Quick start:
   3. scalattice developers keys create   # prints an inference key once
   4. eval "$(scalattice init)"          # after SCALATTICE_API_KEY is in the env
 
+On a terminal, the CLI checks npm every few hours and updates itself when it can
+write the install prefix. Force it with: scalattice update
+Skip with: --no-update  or  SCALATTICE_NO_UPDATE=1
+
 Config file: ${configPath()}
 Env: SCALATTICE_CLOUD_URL, SCALATTICE_API_URL, SCALATTICE_SESSION_TOKEN,
   SCALATTICE_API_KEY, OPENAI_API_KEY, SCALATTICE_MGMT_KEY, SCALATTICE_BRACKET_MODEL,
   SCALATTICE_STREAM, SCALATTICE_THINKING, SCALATTICE_REGION, SCALATTICE_VET_REPLICAS,
-  SCALATTICE_SECURITY
+  SCALATTICE_SECURITY, SCALATTICE_NO_UPDATE
 `;
 
 const SHELL_HELP = `Commands:
   whoami
+  update
   login [--email …]
   logout
   credits
@@ -186,6 +193,8 @@ function parseArgs(argv) {
     else if (a === '--region') flags.region = argv[++i];
     else if (a === '--vet') flags.vet = Number(argv[++i]);
     else if (a === '--security') flags.security = argv[++i];
+    else if (a === '--no-update') flags.noUpdate = true;
+    else if (a === '--check') flags.check = true;
     else if (a.startsWith('-')) throw new Error(`Unknown flag: ${a}`);
     else positionals.push(a);
   }
@@ -375,6 +384,9 @@ async function dispatch(argv, { shell = false, rl } = {}) {
     case 'whoami':
       await cmdWhoami();
       break;
+    case 'update':
+      await cmdUpdate(flags);
+      break;
     case 'mcp':
       await runMcpServer();
       break;
@@ -443,6 +455,17 @@ export async function main(argv) {
   const { flags, positionals } = parseArgs(argv);
   const [rawCmd] = positionals;
   const cmd = CMD_ALIAS[rawCmd] || rawCmd;
+
+  if (cmd === 'mcp') {
+    await runMcpServer();
+    return;
+  }
+  if (cmd === 'update') {
+    await cmdUpdate(flags);
+    return;
+  }
+
+  await maybeAutoUpdate({ argv, cmd, flags });
 
   if (cmd === 'help' || (flags.help && cmd !== 'bracket')) {
     print(HELP.trim());

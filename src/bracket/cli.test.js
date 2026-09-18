@@ -9,7 +9,7 @@ const bin = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../bin/s
 function run(args) {
   return spawnSync(process.execPath, [bin, ...args], {
     encoding: 'utf8',
-    env: { ...process.env, SCALATTICE_CONFIG_DIR: '/tmp/scalattice-cli-test-empty' },
+    env: { ...process.env, SCALATTICE_CONFIG_DIR: '/tmp/scalattice-cli-test-empty', SCALATTICE_NO_UPDATE: '1' },
   });
 }
 
@@ -18,6 +18,7 @@ test('scalattice --help still documents login and mcp', () => {
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /scalattice login/);
   assert.match(r.stdout, /scalattice mcp/);
+  assert.match(r.stdout, /scalattice update/);
   assert.match(r.stdout, /scalattice bracket/);
   assert.doesNotMatch(r.stdout, /scalattice agent\b/);
 });
@@ -31,6 +32,7 @@ test('scalattice bracket --help names Bracket', () => {
   assert.match(r.stdout, /--stream/);
   assert.match(r.stdout, /--think/);
   assert.match(r.stdout, /--region/);
+  assert.match(r.stdout, /\/help \[command\]/);
   assert.match(r.stdout, /\/settings/);
 });
 
@@ -49,6 +51,8 @@ test('banner names Scalattice Bracket and can show credits', async () => {
   assert.match(text, /dev@example.com/);
   assert.match(text, /Wallet \$12\.34/);
   assert.match(text, /stream · think · auto · vet 1 · tier1/);
+  assert.match(text, /[\u2800-\u28FF]/);
+  assert.doesNotMatch(text, /\[ \]\s+Scalattice Bracket/);
   assert.doesNotMatch(text, /coding harness/);
 });
 
@@ -58,6 +62,7 @@ test('intro stays a fixed block above the transcript', async () => {
   const intro = renderIntro(meta);
   assert.match(intro, /Scalattice Bracket/);
   assert.match(intro, /Ask about this workspace/);
+  assert.match(intro, /\/help \[command\]/);
   assert.equal(introRowCount(meta), intro.split('\n').length);
   assert.ok(introRowCount(meta) >= 6);
 });
@@ -113,6 +118,7 @@ test('whoami reports an env inference key even without a Cloud session', () => {
     env: {
       ...process.env,
       SCALATTICE_CONFIG_DIR: '/tmp/scalattice-cli-test-empty',
+      SCALATTICE_NO_UPDATE: '1',
       SCALATTICE_SESSION_TOKEN: '',
       SCALATTICE_MGMT_KEY: '',
       SCALATTICE_API_KEY: 'slt_abcdefghijklmnopqrstuvwx',

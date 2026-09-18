@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { stdin as input, stdout as output } from 'node:process';
+import { logoBraille, logoCellWidth } from './logo.js';
 
 const CYAN = '\x1b[38;2;34;211;238m';
 const VIOLET = '\x1b[38;2;167;139;250m';
@@ -66,17 +67,28 @@ export function renderBanner({ cwd, model, yolo, version = pkgVersion(), email, 
   const w = width();
   const ver = version ? ` v${version}` : '';
   const mode = yolo ? 'yolo' : 'approvals on';
-  const lines = [
-    hline(w, '╭', '─', '╮'),
-    row(w, `${paint(CYAN, `${BOLD}[ ]${RESET}${CYAN}`)}  ${paint(TEXT, `${BOLD}Scalattice Bracket`)}${paint(MUTED, ver)}`),
-    row(w, ''),
-    row(w, paint(MUTED, cwd || process.cwd())),
-    row(w, paint(MUTED, `${model} · ${mode}`)),
+  const markRaw = logoBraille({ width: 12, height: 12, color: tty() });
+  const mark = markRaw.length ? markRaw : [paint(CYAN, `${BOLD}[ ]`)];
+  const markW = logoCellWidth(mark) || 3;
+  const gap = '  ';
+  const indent = `${' '.repeat(markW)}${gap}`;
+  const rest = [
+    `${paint(TEXT, `${BOLD}Scalattice Bracket`)}${paint(MUTED, ver)}`,
+    paint(MUTED, cwd || process.cwd()),
+    paint(MUTED, `${model} · ${mode}`),
   ];
-  if (policy) lines.push(row(w, paint(MUTED, policy)));
-  if (email) lines.push(row(w, paint(MUTED, email)));
+  if (policy) rest.push(paint(MUTED, policy));
+  if (email) rest.push(paint(MUTED, email));
   for (const line of credits) {
-    if (line) lines.push(row(w, paint(MUTED, line)));
+    if (line) rest.push(paint(MUTED, line));
+  }
+
+  const lines = [hline(w, '╭', '─', '╮')];
+  const n = Math.max(mark.length, rest.length);
+  for (let i = 0; i < n; i += 1) {
+    const text = rest[i] || '';
+    if (i < mark.length) lines.push(row(w, `${mark[i]}${gap}${text}`));
+    else lines.push(row(w, `${indent}${text}`));
   }
   lines.push(hline(w, '╰', '─', '╯'));
   return lines.join('\n');
@@ -84,7 +96,7 @@ export function renderBanner({ cwd, model, yolo, version = pkgVersion(), email, 
 
 export function renderIntro(meta = {}) {
   const banner = renderBanner(meta);
-  const hint = `  ${paint(MUTED, 'Ask about this workspace. /help  /exit  /settings  /stream  /think  /credits')}`;
+  const hint = `  ${paint(MUTED, 'Ask about this workspace.  /help [command]   /settings   /exit')}`;
   return `${banner}\n\n${hint}`;
 }
 
@@ -321,7 +333,10 @@ export function createTui() {
       write(`\x1b[${scrollTop};1H\x1b[J`);
     },
     note(s) {
-      write(`  ${paint(MUTED, s)}\n`);
+      write('\n');
+      for (const line of String(s || '').split('\n')) {
+        write(`  ${paint(MUTED, line)}\n`);
+      }
     },
     user(s) {
       write(`\n${paint(CYAN, `${BOLD}you`)}  ${s}\n`);

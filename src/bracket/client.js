@@ -1,8 +1,14 @@
 import { routingHeaders } from './settings.js';
 import { applyThinkingTag, createThinkSplitter } from './think.js';
 
-function apiBase(apiUrl) {
-  return String(apiUrl || 'https://api.scalattice.com').replace(/\/$/, '');
+/** Config/init store OPENAI_BASE_URL including `/v1`. Accept that or a host origin. */
+export function inferenceUrl(apiUrl, path) {
+  let base = String(apiUrl || 'https://api.scalattice.cloud/v1').replace(/\/+$/, '');
+  if (!/\/v1$/i.test(base)) base += '/v1';
+  const suffix = String(path || '')
+    .replace(/^\/+/, '')
+    .replace(/^v1\//i, '');
+  return `${base}/${suffix}`;
 }
 
 function emitDelta(onDelta, part) {
@@ -127,7 +133,8 @@ export async function chatCompletion({
     body.tools = tools;
     body.tool_choice = 'auto';
   }
-  const res = await fetch(`${apiBase(apiUrl)}/v1/chat/completions`, {
+  const url = inferenceUrl(apiUrl, '/chat/completions');
+  const res = await fetch(url, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -147,7 +154,7 @@ export async function chatCompletion({
     } catch {
       /* keep */
     }
-    throw new Error(`API ${res.status}: ${msg}`);
+    throw new Error(`API ${res.status} ${url}: ${msg}`);
   }
   const ctype = (res.headers.get('content-type') || '').toLowerCase();
   if (useStream && res.body && (ctype.includes('event-stream') || ctype.includes('octet-stream') || !ctype.includes('json'))) {
@@ -177,7 +184,7 @@ export async function chatCompletion({
 }
 
 export async function listModels({ apiUrl, apiKey } = {}) {
-  const res = await fetch(`${apiBase(apiUrl)}/v1/models`, {
+  const res = await fetch(inferenceUrl(apiUrl, '/models'), {
     headers: { Authorization: `Bearer ${apiKey}` },
   });
   if (!res.ok) throw new Error(`models ${res.status}`);
