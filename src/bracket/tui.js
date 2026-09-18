@@ -42,23 +42,32 @@ function hline(w, left, mid, right) {
 }
 
 function row(w, inner) {
-  const pad = Math.max(0, w - 4 - strip(inner).length);
-  return `│ ${inner}${' '.repeat(pad)} │`;
+  const max = Math.max(0, w - 4);
+  let text = inner;
+  if (strip(text).length > max) {
+    text = paint(MUTED, `${strip(text).slice(0, Math.max(0, max - 1))}…`);
+  }
+  const pad = Math.max(0, max - strip(text).length);
+  return `│ ${text}${' '.repeat(pad)} │`;
 }
 
-export function renderBanner({ cwd, model, yolo, version = pkgVersion() } = {}) {
+export function renderBanner({ cwd, model, yolo, version = pkgVersion(), email, credits = [] } = {}) {
   const w = width();
   const ver = version ? ` v${version}` : '';
   const mode = yolo ? 'yolo' : 'approvals on';
-  return [
+  const lines = [
     hline(w, '╭', '─', '╮'),
     row(w, `${paint(CYAN, `${BOLD}[ ]${RESET}${CYAN}`)}  ${paint(TEXT, `${BOLD}Scalattice Bracket`)}${paint(MUTED, ver)}`),
-    row(w, paint(VIOLET, 'coding harness')),
     row(w, ''),
     row(w, paint(MUTED, cwd || process.cwd())),
     row(w, paint(MUTED, `${model} · ${mode}`)),
-    hline(w, '╰', '─', '╯'),
-  ].join('\n');
+  ];
+  if (email) lines.push(row(w, paint(MUTED, email)));
+  for (const line of credits) {
+    if (line) lines.push(row(w, paint(MUTED, line)));
+  }
+  lines.push(hline(w, '╰', '─', '╯'));
+  return lines.join('\n');
 }
 
 function renderInput(w, value) {
@@ -174,7 +183,7 @@ export function createTui() {
     },
     banner(meta) {
       write(`\x1b[2J\x1b[H${renderBanner(meta)}\n`);
-      write(`\n  ${paint(MUTED, 'Ask about this workspace. /help  /exit  /model  /yolo')}\n`);
+      write(`\n  ${paint(MUTED, 'Ask about this workspace. /help  /exit  /model  /yolo  /credits')}\n`);
     },
     note(s) {
       write(`  ${paint(MUTED, s)}\n`);

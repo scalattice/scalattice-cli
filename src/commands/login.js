@@ -1,7 +1,6 @@
 import { cloudFetch } from '../api.js';
 import { loadConfig, saveSession, clearSecrets } from '../config.js';
 import { print, prompt } from '../io.js';
-import { sessionRefreshHint } from '../session.js';
 
 export async function cmdLogin(args) {
   const cfg = loadConfig();
@@ -18,7 +17,9 @@ export async function cmdLogin(args) {
     });
   } catch (err) {
     if (/open this page in a browser/i.test(err?.message || '')) {
-      throw new Error(sessionRefreshHint(cfg));
+      throw new Error(
+        `This terminal cannot send a login code.\nOpen ${cfg.cloudUrl}/auth. If that tab is already signed in, Cloud shows a command to copy — run it here.`
+      );
     }
     throw err;
   }

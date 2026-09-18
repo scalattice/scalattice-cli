@@ -46,7 +46,7 @@ Usage:
   scalattice mcp
   scalattice bracket ["prompt"] [--yolo] [--print] [--model ID]
 
-Bracket (coding harness — not scalattice-agent, the GPU daemon):
+Bracket:
   scalattice bracket
   scalattice bracket "fix the failing tests"
   scalattice bracket --help

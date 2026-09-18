@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { stdin as input, stdout as output } from 'node:process';
 import { print } from '../io.js';
-import { cmdCredits, cmdWhoami } from '../commands/misc.js';
+import { cmdCredits, cmdWhoami, loadBilling, bannerCreditLines } from '../commands/misc.js';
 import { resolveBracketAuth } from './auth.js';
 import { listModelIds } from './client.js';
 import { runLoop } from './loop.js';
@@ -13,8 +13,6 @@ import { createToolRunner, TOOL_DEFS, toolSummary } from './tools.js';
 import { createTui } from './tui.js';
 
 export const BRACKET_HELP = `scalattice bracket — coding harness (reads/edits files, runs commands)
-
-Not scalattice-agent (that is the GPU provider daemon).
 
 Usage:
   scalattice bracket
@@ -238,7 +236,14 @@ export async function cmdBracket(opts = {}) {
 
   ui.enter();
   try {
-    ui.banner({ cwd, model, yolo: permissions.yolo });
+    const billing = await loadBilling(auth);
+    ui.banner({
+      cwd,
+      model,
+      yolo: permissions.yolo,
+      email: auth.email || '',
+      credits: bannerCreditLines(billing, model),
+    });
     if (flags.continue) ui.note('Continued last session.');
 
     if (promptText) {

@@ -12,7 +12,7 @@ export function sessionRefreshHint(cfg) {
   const cloud = cfg?.cloudUrl || 'https://scalattice.cloud';
   return [
     'Cloud session is missing or expired.',
-    `Open ${cloud}/auth, copy the curl command, and run it in this terminal.`,
+    `Open ${cloud}/auth. If that tab is already signed in, Cloud shows a command to copy — run it here.`,
     `That writes a session to ${configPath()}. Then try again.`,
   ].join('\n');
 }
