@@ -99,7 +99,7 @@ Env overrides: `SCALATTICE_CLOUD_URL`, `SCALATTICE_API_URL`, `SCALATTICE_API_KEY
 
 ## Bracket
 
-Bracket is the coding harness in this CLI. It is **not** [`scalattice-agent`](https://github.com/scalattice/scalattice-agent) (the GPU provider daemon). `scalattice bracket` takes over the terminal (branded TUI). `scalattice` with no args is still the account prompt.
+Bracket is the coding harness in this CLI. `scalattice bracket` takes over the terminal. `scalattice` with no args is still the account prompt.
 
 ```bash
 scalattice login

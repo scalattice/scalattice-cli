@@ -1,11 +1,10 @@
-import { mgmtFetch } from '../api.js';
 import { loadConfig } from '../config.js';
 import { print, prompt } from '../io.js';
-import { requireCloudAuth } from './mgmt.js';
+import { authedFetch, requireCloudAuth } from './mgmt.js';
 
 export async function cmdDevelopersKeysList() {
   const cfg = requireCloudAuth(loadConfig());
-  const data = await mgmtFetch(cfg, '/api/v1/developers/keys');
+  const data = await authedFetch(cfg, '/api/v1/developers/keys');
   const keys = data.keys || data || [];
   if (!Array.isArray(keys) || !keys.length) {
     print('No inference API keys yet.');
@@ -22,7 +21,7 @@ export async function cmdDevelopersKeysCreate(args) {
   const name =
     args.name ||
     (args.yes ? 'CLI key' : await prompt('Key name', { defaultValue: 'CLI key' }));
-  const data = await mgmtFetch(cfg, '/api/v1/developers/keys', {
+  const data = await authedFetch(cfg, '/api/v1/developers/keys', {
     method: 'POST',
     body: { name },
   });
@@ -42,7 +41,7 @@ export async function cmdDevelopersKeysRoll(args, rest = []) {
   const cfg = requireCloudAuth(loadConfig());
   const id = String(args.id || rest[0] || '').trim();
   if (!id) throw new Error('Usage: developers keys roll --id KEY_ID');
-  const data = await mgmtFetch(cfg, `/api/v1/developers/keys/${id}/roll`, {
+  const data = await authedFetch(cfg, `/api/v1/developers/keys/${id}/roll`, {
     method: 'POST',
     body: {},
   });
@@ -56,6 +55,6 @@ export async function cmdDevelopersKeysRevoke(args, rest = []) {
   const cfg = requireCloudAuth(loadConfig());
   const id = String(args.id || rest[0] || '').trim();
   if (!id) throw new Error('Usage: developers keys revoke --id KEY_ID');
-  await mgmtFetch(cfg, `/api/v1/developers/keys/${id}`, { method: 'DELETE' });
+  await authedFetch(cfg, `/api/v1/developers/keys/${id}`, { method: 'DELETE' });
   print(`Revoked inference API key ${id}`);
 }
