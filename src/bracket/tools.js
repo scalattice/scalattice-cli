@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { applyEdit } from './edit.js';
 import { globToRegExp, looksBinary, resolveWorkspacePath, walkFiles } from './paths.js';
+import { webFetchTool, webSearchTool } from './web.js';
 
 const MAX_READ_BYTES = 512 * 1024;
 const MAX_TOOL_CHARS = 80_000;
@@ -109,6 +110,22 @@ export const TOOL_DEFS = [
       },
     },
     ['items']
+  ),
+  fn(
+    'web_search',
+    'Search the public web. Use for live docs, current events, and anything not in this workspace.',
+    {
+      query: { type: 'string', description: 'Search query' },
+    },
+    ['query']
+  ),
+  fn(
+    'web_fetch',
+    'GET a public http(s) URL and return text. HTML is stripped to readable text. Use after web_search or when the user names a page.',
+    {
+      url: { type: 'string', description: 'Full http(s) URL' },
+    },
+    ['url']
   ),
 ];
 
@@ -307,6 +324,12 @@ export function createToolRunner({ cwd, permissions, todos }) {
             .map((t) => `- [${t.status || 'pending'}] ${t.content}`)
             .join('\n') || '(empty list)';
         }
+        case 'web_search':
+          if (!args.query) throw new Error('query is required');
+          return await webSearchTool(args);
+        case 'web_fetch':
+          if (!args.url) throw new Error('url is required');
+          return await webFetchTool(args);
         default:
           return `Unknown tool: ${name}`;
       }
@@ -320,7 +343,45 @@ export function toolSummary(call) {
   const name = call.function?.name || 'tool';
   const args = parseArgs(call.function?.arguments);
   if (name === 'bash') return `bash  ${args.command || ''}`.trim();
+  if (name === 'web_search') return `web_search  ${args.query || ''}`.trim();
+  if (name === 'web_fetch') return `web_fetch  ${args.url || ''}`.trim();
   if (args.path) return `${name}  ${args.path}`;
   if (args.pattern) return `${name}  ${args.pattern}`;
   return name;
+}
+
+export function toolsPrompt() {
+  const listed = TOOL_DEFS.map((t) => ({
+    type: 'function',
+    function: {
+      name: t.function.name,
+      description: t.function.description,
+      parameters: t.function.parameters,
+    },
+  }));
+  return [
+    'You can call tools. The API does not run OpenAI native tool_calls while streaming, so you MUST emit XML blocks. Bracket executes them.',
+    'When you need a tool, output one or more blocks and then stop. No markdown fences around the blocks. Do not write a tutorial about the tools.',
+    '<tool_call>',
+    '{"name":"TOOL_NAME","arguments":{"argument_name":"value"}}',
+    '</tool_call>',
+    'Prefer tools over guessing. Use web_search and web_fetch for live pages and anything outside this workspace. bash can also reach the network if you must.',
+    'If you do not need a tool, answer the user in Markdown with no tool_call tags.',
+    `Available tools (JSON):\n${JSON.stringify(listed)}`,
+  ].join('\n');
+}
+
+export function toolsBlock() {
+  const rows = TOOL_DEFS.map((t) => {
+    const name = t.function.name;
+    const desc = String(t.function.description || '').split('.')[0];
+    return [name, desc];
+  });
+  const w = Math.max(...rows.map((r) => r[0].length));
+  return [
+    'The model can call these tools while it works.',
+    'You can run some yourself: /bash /read /ls /grep /glob /search /fetch',
+    '',
+    ...rows.map(([name, desc]) => `${name.padEnd(w)}  ${desc}`),
+  ].join('\n');
 }

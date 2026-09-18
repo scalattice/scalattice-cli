@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { LOGO, RESET } from './theme.js';
 
 const LOGO_URL = 'https://scalattice.com/resources/logos/scalattice/logo-light-noword.svg';
 const LOGO_FILE = path.join(
@@ -10,9 +11,6 @@ const LOGO_FILE = path.join(
   'media',
   'logo-light-noword.svg'
 );
-
-const CYAN = '\x1b[38;2;34;211;238m';
-const RESET = '\x1b[0m';
 
 function parsePath(d) {
   const tokens = String(d).match(/[MmCcSsLlHhVvZz]|-?\d*\.?\d+(?:e[-+]?\d+)?/gi) || [];
@@ -206,7 +204,7 @@ export function logoBraille({ width = 8, height = 8, color = true } = {}) {
   if (!edges.length) return [];
   const lines = brailleFromGrid(rasterize(edges, width, height));
   if (!color) return lines;
-  return lines.map((line) => `${CYAN}${line}${RESET}`);
+  return lines.map((line) => `${LOGO}${line}${RESET}`);
 }
 
 export function logoCellWidth(lines) {

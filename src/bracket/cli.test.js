@@ -33,7 +33,9 @@ test('scalattice bracket --help names Bracket', () => {
   assert.match(r.stdout, /--think/);
   assert.match(r.stdout, /--region/);
   assert.match(r.stdout, /\/help \[command\]/);
-  assert.match(r.stdout, /\/settings/);
+  assert.match(r.stdout, /\/chats/);
+  assert.match(r.stdout, /\/tools/);
+  assert.match(r.stdout, /Tab completes/);
 });
 
 test('banner names Scalattice Bracket and can show credits', async () => {
@@ -43,6 +45,7 @@ test('banner names Scalattice Bracket and can show credits', async () => {
     model: 'qwen-3-coder-30b-a3b',
     yolo: false,
     email: 'dev@example.com',
+    columns: 80,
     credits: ['Wallet $12.34 · spent $1.00', 'qwen-3-coder-30b-a3b unlimited'],
     policy: 'stream on · think on · region auto · vet 1 · security tier1',
   });
@@ -54,6 +57,7 @@ test('banner names Scalattice Bracket and can show credits', async () => {
   assert.match(text, /[\u2800-\u28FF]/);
   assert.doesNotMatch(text, /\[ \]\s+Scalattice Bracket/);
   assert.doesNotMatch(text, /coding harness/);
+  assert.doesNotMatch(text, /38;2;34;211;238/);
 });
 
 test('intro stays a fixed block above the transcript', async () => {
@@ -63,8 +67,69 @@ test('intro stays a fixed block above the transcript', async () => {
   assert.match(intro, /Scalattice Bracket/);
   assert.match(intro, /Ask about this workspace/);
   assert.match(intro, /\/help \[command\]/);
+  assert.match(intro, /\/chats/);
+  assert.match(intro, /PgUp/);
   assert.equal(introRowCount(meta), intro.split('\n').length);
   assert.ok(introRowCount(meta) >= 6);
+});
+
+test('wide layout keeps chats in a full-height scrollable panel', async () => {
+  const { renderBanner, renderChatPanel, chatSidebarView, layoutFrame } = await import('./tui.js');
+  const chats = Array.from({ length: 40 }, (_, i) => ({ id: `c${i + 1}`, title: `Chat ${i + 1}` }));
+  const wide = renderBanner({
+    cwd: '/tmp/ws',
+    model: 'qwen-3-coder-30b-a3b',
+    columns: 120,
+    currentId: 'c1',
+    chats,
+  });
+  assert.doesNotMatch(wide, /\bChats\b/);
+  const top = wide.split('\n')[0].replace(/\x1b\[[0-9;]*m/g, '');
+  const lay = layoutFrame({ columns: 120, chats });
+  assert.equal(lay.showSide, true);
+  assert.equal(lay.cols, 120);
+  assert.equal(lay.mainW, 92);
+  assert.equal(top.length, 92);
+
+  const plines = renderChatPanel(
+    { chats, currentId: 'c1' },
+    { height: 12, offset: 0, width: 28 }
+  );
+  assert.equal(plines.length, 12);
+  const panelText = plines.join('\n');
+  assert.match(panelText, /Chats/);
+  assert.match(panelText, /Chat 1/);
+  assert.doesNotMatch(panelText, /Chat 40/);
+  const scrolled = chatSidebarView({ chats, currentId: 'c40' }, 12, 31);
+  assert.ok(scrolled.shown.some((item) => item.title === 'Chat 40'));
+  assert.ok(scrolled.offset > 0);
+
+  const narrow = renderBanner({
+    cwd: '/tmp/ws',
+    model: 'qwen-3-coder-30b-a3b',
+    columns: 80,
+    currentId: 'c1',
+    chats,
+  });
+  assert.doesNotMatch(narrow, /\bChats\b/);
+  const ntop = narrow.split('\n')[0].replace(/\x1b\[[0-9;]*m/g, '');
+  assert.equal(ntop.length, 80);
+});
+
+test('transcript wrap and history window keep older lines reachable', async () => {
+  const { wrapLine, historyWindow } = await import('./tui.js');
+  assert.deepEqual(wrapLine('abcdef', 3), ['abc', 'def']);
+  const painted = wrapLine('\x1b[31mhello\x1b[0m', 3);
+  assert.equal(painted.length, 2);
+  assert.match(painted[0], /hel/);
+  assert.match(painted[1], /lo/);
+  const win = historyWindow(['a', 'b', 'c', 'd'], 2, 1);
+  assert.deepEqual(win.slice, ['b', 'c']);
+  assert.equal(win.offset, 1);
+  assert.equal(win.maxOff, 2);
+  const top = historyWindow(['a', 'b', 'c', 'd'], 2, 99);
+  assert.deepEqual(top.slice, ['a', 'b']);
+  assert.equal(top.offset, 2);
 });
 
 test('thinking is guttered italic, not plain assistant text', async () => {
@@ -77,6 +142,29 @@ test('thinking is guttered italic, not plain assistant text', async () => {
   const next = thinkDeltaToAnsi('\nmore', first.state, { width: 40 });
   assert.match(next.text, /┊ /);
   assert.match(next.text, /more/);
+});
+
+test('line submit accepts CR, LF, CRLF, and a line glued to enter', async () => {
+  const { splitLineSubmit } = await import('./tui.js');
+  assert.deepEqual(splitLineSubmit('\r'), { line: '', rest: '' });
+  assert.deepEqual(splitLineSubmit('\n'), { line: '', rest: '' });
+  assert.deepEqual(splitLineSubmit('\r\n'), { line: '', rest: '' });
+  assert.deepEqual(splitLineSubmit('/help\r\n'), { line: '/help', rest: '' });
+  assert.deepEqual(splitLineSubmit('/help\n'), { line: '/help', rest: '' });
+  assert.equal(splitLineSubmit('/help'), null);
+  assert.deepEqual(splitLineSubmit('/help\r\nmore'), { line: '/help', rest: 'more' });
+});
+
+test('elapsed time is compact ASCII', async () => {
+  const { formatElapsed } = await import('./tui.js');
+  assert.equal(formatElapsed(0), '0.0s');
+  assert.equal(formatElapsed(1400), '1.4s');
+  assert.equal(formatElapsed(61_000), '1m 01s');
+});
+
+test('help text has no em dashes', () => {
+  const r = run(['bracket', '--help']);
+  assert.doesNotMatch(r.stdout, /[\u2014\u2013]/);
 });
 
 test('backet is a typo alias for bracket --help', () => {
@@ -92,24 +180,26 @@ test('unknown commands still fail', () => {
 });
 
 test('banner credit lines summarize wallet and matching grant', async () => {
-  const { bannerCreditLines } = await import('../commands/misc.js');
-  const lines = bannerCreditLines(
-    {
-      unlimitedCredits: true,
-      lifetimeSpendUsd: 1.5,
-      modelCredits: [
-        {
-          modelId: 'qwen-3-8b',
-          displayName: 'Qwen 3 8B',
-          grantType: 'unlimited',
-          expiresAt: '2026-12-01T00:00:00.000Z',
-        },
-      ],
-    },
-    'qwen-3-8b'
-  );
+  const { bannerCreditLines, formatCredits } = await import('../commands/misc.js');
+  const billing = {
+    unlimitedCredits: true,
+    lifetimeSpendUsd: 1.5,
+    modelCredits: [
+      {
+        modelId: 'qwen-3-8b',
+        displayName: 'Qwen 3 8B',
+        grantType: 'unlimited',
+        expiresAt: '2026-12-01T00:00:00.000Z',
+      },
+    ],
+  };
+  const lines = bannerCreditLines(billing, 'qwen-3-8b');
   assert.equal(lines[0], 'Wallet unlimited · spent $1.50');
   assert.equal(lines[1], 'Qwen 3 8B unlimited · expires 2026-12-01');
+  const text = formatCredits(billing);
+  assert.match(text, /Wallet: unlimited \(admin\)/);
+  assert.match(text, /Lifetime spend: \$1\.5000/);
+  assert.match(text, /Qwen 3 8B \(unlimited\): unlimited/);
 });
 
 test('whoami reports an env inference key even without a Cloud session', () => {

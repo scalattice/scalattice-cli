@@ -1,6 +1,7 @@
 import { chatCompletion } from './client.js';
 import { compactMessages, estimateChars } from './prompt.js';
 import { toolSummary } from './tools.js';
+import { parseFallbackToolCalls, stripRecoveredToolText } from './xmlTools.js';
 
 const COMPACT_AFTER = 180_000;
 
@@ -8,6 +9,18 @@ function historyMessage(assistant) {
   const msg = { role: 'assistant', content: assistant.content ?? null };
   if (assistant.tool_calls?.length) msg.tool_calls = assistant.tool_calls;
   return msg;
+}
+
+function withFallbackTools(assistant) {
+  if (assistant?.tool_calls?.length) return assistant;
+  const recovered = parseFallbackToolCalls(assistant?.content);
+  if (!recovered.length) return assistant;
+  const stripped = stripRecoveredToolText(assistant.content);
+  return {
+    ...assistant,
+    tool_calls: recovered,
+    content: stripped || null,
+  };
 }
 
 export async function runLoop({
@@ -33,17 +46,19 @@ export async function runLoop({
       history = compactMessages(history, { keep: 16 });
     }
 
-    const assistant = await chatCompletion({
-      apiUrl,
-      apiKey,
-      messages: history,
-      tools,
-      model,
-      stream: useStream,
-      settings,
-      signal,
-      onDelta,
-    });
+    const assistant = withFallbackTools(
+      await chatCompletion({
+        apiUrl,
+        apiKey,
+        messages: history,
+        tools,
+        model,
+        stream: useStream,
+        settings,
+        signal,
+        onDelta,
+      })
+    );
 
     history = [...history, historyMessage(assistant)];
     onAssistantEnd?.(assistant);

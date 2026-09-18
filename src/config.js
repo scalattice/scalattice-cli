@@ -7,10 +7,34 @@ const DEFAULTS = {
   apiUrl: 'https://api.scalattice.cloud/v1',
 };
 
+export function windowsLegacyConfigDir(home = os.homedir()) {
+  return path.join(home, '.config', 'scalattice');
+}
+
+export function migrateLegacyWindowsConfig(
+  primaryDir,
+  homeDir = os.homedir(),
+  exists = (p) => fs.existsSync(p)
+) {
+  const dest = path.join(primaryDir, 'config.json');
+  if (exists(dest)) return dest;
+  const src = path.join(windowsLegacyConfigDir(homeDir), 'config.json');
+  if (!exists(src)) return dest;
+  try {
+    fs.mkdirSync(primaryDir, { recursive: true, mode: 0o700 });
+    fs.copyFileSync(src, dest);
+  } catch {
+    return src;
+  }
+  return dest;
+}
+
 export function configDir() {
   if (process.env.SCALATTICE_CONFIG_DIR) return process.env.SCALATTICE_CONFIG_DIR;
   if (process.platform === 'win32') {
-    return path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'scalattice');
+    const primary = path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'scalattice');
+    migrateLegacyWindowsConfig(primary);
+    return primary;
   }
   const xdg = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
   return path.join(xdg, 'scalattice');
@@ -34,12 +58,19 @@ export function configPath() {
 }
 
 function readStored() {
-  try {
-    const parsed = JSON.parse(fs.readFileSync(configPath(), 'utf8'));
-    return parsed && typeof parsed === 'object' ? parsed : {};
-  } catch {
-    return {};
+  const files = [configPath()];
+  if (process.platform === 'win32' && !process.env.SCALATTICE_CONFIG_DIR) {
+    files.push(path.join(windowsLegacyConfigDir(), 'config.json'));
   }
+  for (const file of files) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+      if (parsed && typeof parsed === 'object') return parsed;
+    } catch {
+      /* try next */
+    }
+  }
+  return {};
 }
 
 export function loadConfig() {
@@ -51,6 +82,7 @@ export function loadConfig() {
     email: stored.email || '',
     apiKey: process.env.SCALATTICE_API_KEY || process.env.OPENAI_API_KEY || '',
     mgmtKey: process.env.SCALATTICE_MGMT_KEY || '',
+    bracketModel: String(stored.bracketModel || '').trim(),
   };
 }
 
@@ -64,6 +96,7 @@ export function saveConfig(patch) {
     apiUrl: next.apiUrl || DEFAULTS.apiUrl,
     sessionToken: next.sessionToken || undefined,
     email: next.email || undefined,
+    bracketModel: String(next.bracketModel || '').trim() || undefined,
   };
   const file = configPath();
   fs.writeFileSync(file, `${JSON.stringify(fileBody, null, 2)}\n`, { mode: 0o600 });
@@ -73,6 +106,16 @@ export function saveConfig(patch) {
     /* ignore on platforms without chmod */
   }
   return loadConfig();
+}
+
+export function loadLastBracketModel() {
+  return String(readStored().bracketModel || '').trim();
+}
+
+export function saveLastBracketModel(id) {
+  const model = String(id || '').trim();
+  if (!model) return loadConfig();
+  return saveConfig({ bracketModel: model });
 }
 
 export function saveSession(token, email) {

@@ -56,6 +56,40 @@ test('parse JSON tool_call block', () => {
   assert.equal(JSON.parse(calls[0].function.arguments).path, 'README.md');
 });
 
+test('parse function/parameters JSON dumps without dropping later calls', () => {
+  const calls = parseFallbackToolCalls(`
+\`\`\`json
+// Search for "error" in .js files
+{
+  "function": "grep",
+  "parameters": {
+    "pattern": "error",
+    "glob": "*.js"
+  }
+}
+
+// List directory contents
+{
+  "function": "list_dir",
+  "parameters": {
+    "path": "src"
+  }
+}
+
+{
+  "function": "todo_write",
+  "parameters": {
+    "items": [{ "id": "1", "content": "Fix login bug", "status": "in_progress" }]
+  }
+}
+\`\`\`
+`);
+  assert.equal(calls.map((c) => c.function.name).join(','), 'grep,list_dir,todo_write');
+  assert.equal(JSON.parse(calls[0].function.arguments).pattern, 'error');
+  assert.equal(JSON.parse(calls[1].function.arguments).path, 'src');
+  assert.equal(JSON.parse(calls[2].function.arguments).items[0].id, '1');
+});
+
 test('default settings stream and think with compatible headers', async () => {
   const { defaultSettings, routingHeaders, patchSettings, settingsLine } = await import('./settings.js');
   const empty = {};
@@ -88,7 +122,8 @@ test('slash help explains one command and settings are labeled', async () => {
   const index = slashIndex();
   assert.match(index, /\/help \[command\]/);
   assert.match(index, /\/settings/);
-  assert.match(index, /\/region/);
+  assert.match(index, /\/tools/);
+  assert.match(slashHelp('bash'), /\/bash/);
 
   const stream = slashHelp('stream', { stream: true, thinking: true, region: 'auto', vet: 1, security: 'tier1' });
   assert.match(stream, /\/stream \[on\|off\]/);
@@ -118,6 +153,28 @@ test('slash help explains one command and settings are labeled', async () => {
   assert.match(block, /Vet\s+1/);
   assert.match(block, /Security\s+tier1/);
   assert.doesNotMatch(block, /stream · think · auto/);
+  assert.doesNotMatch(block, /[\u2014\u2013]/);
+  assert.doesNotMatch(slashHelp('vet'), /[\u2014\u2013]/);
+});
+
+test('tab completes slash commands and arguments', async () => {
+  const { completeSlash } = await import('./slash.js');
+  const cmd = completeSlash('/se');
+  assert.ok(cmd.matches.some((m) => m.startsWith('/settings')));
+  assert.ok(cmd.matches.some((m) => m.startsWith('/security')));
+  const stream = completeSlash('/st');
+  assert.equal(stream.completed, '/stream ');
+  const unique = completeSlash('/ex');
+  assert.equal(unique.completed, '/exit ');
+  const region = completeSlash('/region u');
+  assert.ok(region.matches.some((m) => m.includes('us')));
+  const onoff = completeSlash('/stream ');
+  assert.deepEqual(
+    onoff.matches.map((m) => m.trim()),
+    ['/stream on', '/stream off']
+  );
+  const models = completeSlash('/model q', { models: ['qwen-3-8b', 'qwen-3-32b'] });
+  assert.ok(models.matches.some((m) => m.includes('qwen-3-8b')));
 });
 
 test('thinking tag is applied to the last user turn only', async () => {
@@ -185,11 +242,13 @@ test('chatCompletion streams by default and sends native headers', async () => {
       apiKey: 'slt_x',
       model: 'qwen',
       messages: [{ role: 'user', content: 'hello' }],
+      tools: [{ type: 'function', function: { name: 'grep' } }],
       onDelta: (p) => parts.push(p),
     });
     const body = JSON.parse(captured.opts.body);
     assert.equal(captured.url, 'https://api.example/v1/chat/completions');
     assert.equal(body.stream, true);
+    assert.equal(body.tools, undefined);
     assert.match(body.messages.at(-1).content, /\/think$/);
     assert.equal(captured.opts.headers['X-Scalattice-Vet-Replicas'], '1');
     assert.equal(captured.opts.headers['X-Scalattice-Security'], 'tier1');
@@ -200,6 +259,94 @@ test('chatCompletion streams by default and sends native headers', async () => {
       parts.map((p) => p.type),
       ['thinking', 'content']
     );
+  } finally {
+    globalThis.fetch = orig;
+  }
+});
+
+test('stream does not dump a trailing full message after deltas', async () => {
+  const { chatCompletion } = await import('./client.js');
+  const orig = globalThis.fetch;
+  globalThis.fetch = async () => {
+    const sse = [
+      `data: ${JSON.stringify({ choices: [{ delta: { content: 'hi' } }] })}`,
+      `data: ${JSON.stringify({
+        choices: [
+          {
+            delta: {},
+            finish_reason: 'stop',
+            message: { role: 'assistant', content: 'hi', reasoning_content: 'plan' },
+          },
+        ],
+      })}`,
+      'data: [DONE]',
+      '',
+    ].join('\n');
+    return new Response(sse, { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  try {
+    const parts = [];
+    const msg = await chatCompletion({
+      apiUrl: 'https://api.example',
+      apiKey: 'slt_x',
+      model: 'qwen',
+      messages: [{ role: 'user', content: 'hello' }],
+      onDelta: (p) => parts.push(p.text),
+    });
+    assert.equal(msg.content, 'hi');
+    assert.equal(parts.join(''), 'hi');
+  } finally {
+    globalThis.fetch = orig;
+  }
+});
+
+test('stream keeps tool_calls from the final message and incremental args', async () => {
+  const { chatCompletion } = await import('./client.js');
+  const orig = globalThis.fetch;
+  globalThis.fetch = async () => {
+    const sse = [
+      `data: ${JSON.stringify({
+        choices: [{ delta: { tool_calls: [{ index: 0, id: 'c1', function: { name: 'grep', arguments: '' } }] } }],
+      })}`,
+      `data: ${JSON.stringify({
+        choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '{"pattern":' } }] } }],
+      })}`,
+      `data: ${JSON.stringify({
+        choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '"x"}' } }] } }],
+      })}`,
+      `data: ${JSON.stringify({
+        choices: [
+          {
+            delta: {},
+            message: {
+              role: 'assistant',
+              tool_calls: [
+                {
+                  index: 0,
+                  id: 'c1',
+                  type: 'function',
+                  function: { name: 'grep', arguments: '{"pattern":"x"}' },
+                },
+              ],
+            },
+          },
+        ],
+      })}`,
+      'data: [DONE]',
+      '',
+    ].join('\n');
+    return new Response(sse, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+  };
+  try {
+    const msg = await chatCompletion({
+      apiUrl: 'https://api.example',
+      apiKey: 'slt_x',
+      model: 'qwen',
+      messages: [{ role: 'user', content: 'find x' }],
+    });
+    assert.equal(msg.tool_calls.length, 1);
+    assert.equal(msg.tool_calls[0].function.name, 'grep');
+    assert.equal(msg.tool_calls[0].function.arguments, '{"pattern":"x"}');
   } finally {
     globalThis.fetch = orig;
   }

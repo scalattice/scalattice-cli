@@ -2,19 +2,20 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { stdin as input, stdout as output } from 'node:process';
 import { print } from '../io.js';
-import { cmdCredits, cmdWhoami, loadBilling, bannerCreditLines } from '../commands/misc.js';
+import { loadBilling, bannerCreditLines, creditsText, whoamiText } from '../commands/misc.js';
 import { resolveBracketAuth } from './auth.js';
 import { listModelIds } from './client.js';
 import { runLoop } from './loop.js';
 import { createPermissions } from './permissions.js';
 import { buildSystemPrompt, compactMessages, pickDefaultModel } from './prompt.js';
-import { loadLastSession, saveSession } from './session.js';
-import { createToolRunner, TOOL_DEFS, toolSummary } from './tools.js';
+import { loadLastBracketModel, saveLastBracketModel } from '../config.js';
+import { loadLastSession, loadSession, saveSession, newChatId, listSessions, resolveSessionRef, deleteSession, formatSessionList, titleFromMessages } from './session.js';
+import { createToolRunner, TOOL_DEFS, toolSummary, toolsBlock } from './tools.js';
 import { createTui } from './tui.js';
 import { defaultSettings, parseBoolArg, patchSettings, settingsLine } from './settings.js';
-import { settingNote, settingsBlock, slashHelp } from './slash.js';
+import { settingNote, settingsBlock, slashHelp, canonSlash, completeSlash } from './slash.js';
 
-export const BRACKET_HELP = `scalattice bracket — coding harness (reads/edits files, runs commands)
+export const BRACKET_HELP = `scalattice bracket: coding harness (reads/edits files, runs commands)
 
 Usage:
   scalattice bracket
@@ -35,7 +36,7 @@ Flags:
   --max-turns N
       Stop after this many model turns (default 40)
   --continue, -c
-      Resume the last Bracket session in this workspace
+      Resume the last Bracket chat in this workspace
   --stream / --no-stream
       SSE streaming (default on). Streaming needs vet 1 and tier1.
   --think / --no-think
@@ -54,7 +55,9 @@ Inside Bracket:
   /help [command]     explain one command (try /help stream)
   /settings           labeled stream / think / region / vet / security
   /stream /think /region /vet /security /model /yolo /credits /whoami
-  /clear /compact /exit
+  /chats /chat /new /rename /forget /clear /compact /exit
+  /tools /bash /read /ls /grep /glob
+  Tab completes commands, flags, models, chats, and paths.
 
 Auth: sign in (session). Bracket then mints a developer inference key (slt_…).
 Do not use slt_mgmt_… or slt_provider_…. To set a key yourself:
@@ -105,8 +108,10 @@ async function completeTurn({
         else print(`▸ ${summary}`);
       },
       onAssistantEnd: (assistant) => {
-        if (ui) ui.endAssistant();
-        else if (stream && assistant.content) process.stdout.write('\n');
+        if (ui) {
+          if (assistant.tool_calls?.length) ui.replaceAssistant(assistant.content || '');
+          ui.endAssistant();
+        } else if (stream && assistant.content) process.stdout.write('\n');
         if (!ui && !stream && assistant.content) print(assistant.content);
         if (!ui && !stream) {
           for (const call of assistant.tool_calls || []) {
@@ -147,19 +152,34 @@ export async function cmdBracket(opts = {}) {
   } catch {
     /* catalog optional */
   }
-  let model = flags.model || pickDefaultModel(modelIds);
+  let model = flags.model || pickDefaultModel(modelIds, loadLastBracketModel());
+  if (model) saveLastBracketModel(model);
 
   const todos = [];
   let messages;
+  let chatId;
+  let chatTitle;
+  let chatCreatedAt;
 
   if (flags.continue) {
-    const prev = loadLastSession();
-    if (!prev?.messages?.length) throw new Error('No previous Bracket session to continue.');
+    const prev = loadLastSession(cwd);
+    if (!prev?.messages?.length) throw new Error('No previous Bracket chat to continue.');
     messages = prev.messages;
-    if (prev.model && !flags.model) model = prev.model;
+    chatId = prev.id || newChatId();
+    chatTitle = prev.title || titleFromMessages(prev.messages);
+    chatCreatedAt = prev.createdAt;
+    if (prev.model && !flags.model) {
+      model = prev.model;
+      saveLastBracketModel(model);
+    }
   } else {
+    chatId = newChatId();
+    chatTitle = 'New chat';
+    chatCreatedAt = undefined;
     messages = [{ role: 'system', content: buildSystemPrompt({ cwd, model, yolo }) }];
   }
+
+  const hasUserTurns = (msgs) => (msgs || []).some((m) => m?.role === 'user');
 
   if (!interactive) {
     const permissions = createPermissions({ yolo, interactive: false });
@@ -175,54 +195,241 @@ export async function cmdBracket(opts = {}) {
       maxTurns,
       settings,
     });
-    saveSession({ cwd, model, messages });
+    saveSession({ id: chatId, title: chatTitle, createdAt: chatCreatedAt, cwd, model, messages });
     return;
   }
 
-  const ui = createTui();
+  const tuiOpts = {
+    complete: (line) =>
+      completeSlash(line, {
+        models: modelIds,
+        chats: listSessions({ cwd, limit: 80 }),
+        cwd,
+      }),
+  };
+  const ui = createTui(tuiOpts);
   const permissions = createPermissions({
     yolo,
     interactive: true,
     ask: (toolName, summary) => ui.approve(toolName, summary),
   });
-  const persist = () => saveSession({ cwd, model, messages });
-  let billing = null;
-  const syncHeader = () => {
-    ui.updateBanner({
+  const persist = () => {
+    if (!hasUserTurns(messages) && (!chatTitle || chatTitle === 'New chat')) return;
+    const saved = saveSession({
+      id: chatId,
+      title: chatTitle === 'New chat' ? undefined : chatTitle,
+      createdAt: chatCreatedAt,
+      cwd,
       model,
-      yolo: permissions.yolo,
-      policy: settingsLine(settings),
-      credits: bannerCreditLines(billing, model),
+      messages,
     });
+    chatId = saved.id;
+    chatTitle = saved.title;
+    chatCreatedAt = saved.createdAt;
+    saveLastBracketModel(model);
+    syncHeader();
+  };
+  let billing = null;
+  const headerBits = () => ({
+    model,
+    yolo: permissions.yolo,
+    policy: settingsLine(settings),
+    credits: bannerCreditLines(billing, model),
+    chat: chatTitle,
+    chats: listSessions({ cwd, limit: 80 }),
+    currentId: chatId,
+  });
+  const syncHeader = () => {
+    ui.updateBanner(headerBits());
+  };
+
+  const startBlankChat = (note) => {
+    persist();
+    chatId = newChatId();
+    chatTitle = 'New chat';
+    chatCreatedAt = undefined;
+    messages = [{ role: 'system', content: buildSystemPrompt({ cwd, model, yolo: permissions.yolo }) }];
+    ui.clearTranscript();
+    syncHeader();
+    ui.note(note);
+  };
+
+  const openChat = (rec) => {
+    persist();
+    chatId = rec.id;
+    chatTitle = rec.title || titleFromMessages(rec.messages);
+    chatCreatedAt = rec.createdAt;
+    messages = rec.messages || [{ role: 'system', content: buildSystemPrompt({ cwd, model, yolo: permissions.yolo }) }];
+    if (rec.model && !flags.model) {
+      model = rec.model;
+      saveLastBracketModel(model);
+    }
+    saveSession({ ...rec, id: chatId, title: chatTitle, cwd: rec.cwd || cwd, model, messages });
+    ui.replay(messages);
+    syncHeader();
+    ui.note(`Opened ${chatTitle}`);
+  };
+
+  tuiOpts.onOpenChat = ({ id }) => {
+    if (!id || id === chatId) return;
+    const rec = loadSession(id);
+    if (rec) openChat(rec);
+  };
+
+  const runUserTool = createToolRunner({ cwd, permissions, todos });
+
+  const slashTool = async (name, args, label) => {
+    ui.tool(label || toolSummary({ function: { name, arguments: JSON.stringify(args) } }));
+    const result = await runUserTool({ function: { name, arguments: JSON.stringify(args) } });
+    ui.note(String(result ?? ''));
+  };
+
+  const chatsNote = (all = false) => {
+    const rows = listSessions({ cwd, all, limit: 30 });
+    const body = formatSessionList(rows, chatId, { showCwd: all });
+    const hint = all
+      ? 'All saved chats. /chat 2 to switch.'
+      : 'Chats in this workspace. /chats all for other dirs. /chat 2 to switch.';
+    return `${hint}\n\n${body}`;
   };
 
   const handleSlash = async (line) => {
-    const [cmd, ...rest] = line.slice(1).trim().split(/\s+/);
+    const [rawCmd, ...rest] = line.slice(1).trim().split(/\s+/);
+    const cmd = canonSlash(rawCmd);
     const arg = rest.join(' ');
     switch (cmd) {
       case 'help':
         ui.note(slashHelp(arg, { ...settings, model, yolo: permissions.yolo }));
         return 'ok';
       case 'exit':
-      case 'quit':
         return 'exit';
       case 'clear':
-        messages = [{ role: 'system', content: buildSystemPrompt({ cwd, model, yolo: permissions.yolo }) }];
-        ui.clearTranscript();
-        ui.note('Conversation cleared.');
+      case 'new':
+        startBlankChat('New chat. Previous one is saved. /chats to switch.');
+        return 'save';
+      case 'chats':
+        ui.note(chatsNote(arg === 'all'));
+        return 'ok';
+      case 'chat': {
+        if (!arg) {
+          ui.note(chatsNote(false));
+          return 'ok';
+        }
+        const found = resolveSessionRef(arg, { cwd });
+        if (found.error) {
+          ui.note(found.error);
+          return 'ok';
+        }
+        if (found.session.id === chatId) {
+          ui.note(`Already in ${chatTitle}`);
+          return 'ok';
+        }
+        openChat(found.session);
+        return 'save';
+      }
+      case 'rename':
+        if (!arg) {
+          ui.note(chatTitle || 'New chat');
+          return 'ok';
+        }
+        chatTitle = arg;
+        persist();
+        syncHeader();
+        ui.note(`Renamed to ${chatTitle}`);
+        return 'ok';
+      case 'forget': {
+        const target = arg ? resolveSessionRef(arg, { cwd }) : { session: { id: chatId, title: chatTitle } };
+        if (target.error) {
+          ui.note(target.error);
+          return 'ok';
+        }
+        const id = target.session.id;
+        const title = target.session.title || id;
+        const wasCurrent = id === chatId;
+        const gone = deleteSession(id);
+        if (wasCurrent) {
+          chatId = newChatId();
+          chatTitle = 'New chat';
+          chatCreatedAt = undefined;
+          messages = [{ role: 'system', content: buildSystemPrompt({ cwd, model, yolo: permissions.yolo }) }];
+          ui.clearTranscript();
+          syncHeader();
+          ui.note(gone ? `Forgot ${title}.` : 'New chat.');
+        } else if (gone) {
+          ui.note(`Forgot ${title}`);
+        } else {
+          ui.note(`No saved chat ${title}`);
+        }
+        return 'ok';
+      }
+      case 'tools':
+        ui.note(toolsBlock());
+        return 'ok';
+      case 'bash':
+        if (!arg) {
+          ui.note(slashHelp('bash'));
+          return 'ok';
+        }
+        await slashTool('bash', { command: arg }, `bash  ${arg}`);
+        return 'ok';
+      case 'read':
+        if (!arg) {
+          ui.note(slashHelp('read'));
+          return 'ok';
+        }
+        await slashTool('read_file', { path: arg }, `read_file  ${arg}`);
+        return 'ok';
+      case 'ls':
+        await slashTool('list_dir', { path: arg || '.' }, `list_dir  ${arg || '.'}`);
+        return 'ok';
+      case 'glob':
+        if (!arg) {
+          ui.note(slashHelp('glob'));
+          return 'ok';
+        }
+        await slashTool('glob', { pattern: arg }, `glob  ${arg}`);
+        return 'ok';
+      case 'grep': {
+        const [pattern, ...restPath] = arg.split(/\s+/);
+        if (!pattern) {
+          ui.note(slashHelp('grep'));
+          return 'ok';
+        }
+        const grepPath = restPath.join(' ');
+        await slashTool(
+          'grep',
+          { pattern, ...(grepPath ? { path: grepPath } : {}) },
+          `grep  ${arg}`
+        );
+        return 'ok';
+      }
+      case 'search':
+        if (!arg) {
+          ui.note(slashHelp('search'));
+          return 'ok';
+        }
+        await slashTool('web_search', { query: arg }, `web_search  ${arg}`);
+        return 'ok';
+      case 'fetch':
+        if (!arg) {
+          ui.note(slashHelp('fetch'));
+          return 'ok';
+        }
+        await slashTool('web_fetch', { url: arg }, `web_fetch  ${arg}`);
         return 'ok';
       case 'compact':
         messages = compactMessages(messages, { keep: 10 });
         ui.note('Compacted earlier turns.');
-        return 'ok';
+        return 'save';
       case 'model':
         if (arg) {
           model = arg;
+          saveLastBracketModel(model);
           syncHeader();
           ui.note(`Model set to ${model}`);
-        } else {
-          ui.note(modelIds.length ? modelIds.join(', ') : model);
+          return 'save';
         }
+        ui.note(modelIds.length ? modelIds.join(', ') : model);
         return 'ok';
       case 'yolo': {
         const next =
@@ -237,10 +444,20 @@ export async function cmdBracket(opts = {}) {
         return 'ok';
       }
       case 'credits':
-        await cmdCredits();
+        try {
+          ui.note(await creditsText());
+          billing = await loadBilling(auth);
+          syncHeader();
+        } catch (err) {
+          ui.error(err?.message || String(err));
+        }
         return 'ok';
       case 'whoami':
-        await cmdWhoami();
+        try {
+          ui.note(await whoamiText());
+        } catch (err) {
+          ui.error(err?.message || String(err));
+        }
         return 'ok';
       case 'settings':
         ui.note(settingsBlock(settings));
@@ -342,55 +559,88 @@ export async function cmdBracket(opts = {}) {
         settings,
         ui,
       });
+      return true;
     } catch (err) {
+      const last = messages[messages.length - 1];
+      if (last?.role === 'user' && last.content === text) {
+        messages.pop();
+      }
       if (err?.interrupted || /aborted|interrupted/i.test(err?.message || '')) {
         ui.note('Interrupted.');
       } else {
         ui.error(err?.message || String(err));
       }
+      return false;
     }
-    persist();
+  };
+
+  const sendTurn = async (text) => {
+    ui.user(text);
+    ui.beginWork();
+    try {
+      return await runUserTurn(text);
+    } finally {
+      ui.endWork();
+    }
   };
 
   ui.enter();
+  let quitCli = false;
   try {
     billing = await loadBilling(auth);
     ui.banner({
       cwd,
-      model,
-      yolo: permissions.yolo,
       email: auth.email || '',
-      policy: settingsLine(settings),
-      credits: bannerCreditLines(billing, model),
+      ...headerBits(),
     });
-    if (flags.continue) ui.note('Continued last session.');
+    if (flags.continue) {
+      ui.replay(messages);
+      ui.note(`Continued ${chatTitle}`);
+    }
 
+    let restore = '';
     if (promptText) {
-      ui.user(promptText);
-      await runUserTurn(promptText);
+      const ok = await sendTurn(promptText);
+      persist();
+      if (!ok) restore = promptText;
     }
 
     while (true) {
       let line;
       try {
-        line = (await ui.readLine()).trim();
+        line = (await ui.readLine({ initial: restore })).trim();
+        restore = '';
       } catch (err) {
-        if (err?.interrupted) break;
+        if (err?.interrupted) {
+          quitCli = true;
+          break;
+        }
         throw err;
       }
       if (!line) continue;
       if (line.startsWith('/')) {
-        const act = await handleSlash(line);
-        persist();
-        if (act === 'exit') break;
+        const slashName = canonSlash(line.slice(1).trim().split(/\s+/)[0] || '');
+        if (slashName !== 'exit') ui.user(line);
+        let act = 'ok';
+        try {
+          act = await handleSlash(line);
+        } catch (err) {
+          ui.error(err?.message || String(err));
+        }
+        if (act === 'exit') {
+          quitCli = true;
+          break;
+        }
+        if (act === 'save') persist();
         continue;
       }
-      ui.user(line);
-      await runUserTurn(line);
+      const ok = await sendTurn(line);
+      persist();
+      if (!ok) restore = line;
     }
   } finally {
     persist();
     ui.leave();
-    print('');
   }
+  if (quitCli) process.exit(0);
 }

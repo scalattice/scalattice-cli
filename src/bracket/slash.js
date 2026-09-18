@@ -1,9 +1,24 @@
+import fs from 'node:fs';
+import path from 'node:path';
+
 const ALIAS = {
   streaming: 'stream',
   thinking: 'think',
   models: 'model',
   setting: 'settings',
   quit: 'exit',
+  history: 'chats',
+  conversations: 'chats',
+  convos: 'chats',
+  resume: 'chat',
+  open: 'chat',
+  newchat: 'new',
+  renamechat: 'rename',
+  delete: 'forget',
+  rm: 'forget',
+  web: 'search',
+  google: 'search',
+  curl: 'fetch',
 };
 
 export const SLASH = {
@@ -18,12 +33,49 @@ export const SLASH = {
   exit: {
     usage: '/exit',
     summary: 'Leave Bracket',
-    detail: 'Saves this session and returns to the shell. /quit does the same.',
+    detail: 'Saves this session, restores the terminal, and leaves the CLI. /quit does the same.',
   },
   clear: {
     usage: '/clear',
-    summary: 'Drop the conversation, keep the workspace',
-    detail: 'Starts a new chat in this directory. Files on disk are not touched.',
+    summary: 'Start a new chat; keep the previous one on disk',
+    detail:
+      'Saves the current chat if it has messages, then opens a blank one.\n' +
+      'Same as /new. Files in the workspace are not touched. /chats lists saved chats.',
+  },
+  new: {
+    usage: '/new',
+    summary: 'Start a new chat',
+    detail: 'Saves the current chat and opens a blank one. /chats to switch back.',
+  },
+  chats: {
+    usage: '/chats [all]',
+    summary: 'List saved chats',
+    detail:
+      'Shows recent chats for this workspace, newest first.\n' +
+      'On a wide terminal they sit in a full-height panel on the right.\n' +
+      'Wheel over the panel to scroll. Click a row to switch.\n' +
+      '/chats all includes other directories.\n' +
+      'Switch with /chat 2 or /chat <id>. Stored under the local data dir.',
+  },
+  chat: {
+    usage: '/chat [n|id|title]',
+    summary: 'Switch to a saved chat',
+    detail:
+      'No argument lists chats.\n' +
+      '/chat 2 opens the second row from /chats.\n' +
+      'You can also pass an id prefix or part of the title.',
+  },
+  rename: {
+    usage: '/rename [title]',
+    summary: 'Rename the current chat',
+    detail: 'Bare /rename shows the current title. Pass a name to set it.',
+  },
+  forget: {
+    usage: '/forget [n|id]',
+    summary: 'Delete a saved chat',
+    detail:
+      'No argument deletes the current chat and opens a blank one.\n' +
+      'Pass a list number or id to delete that chat instead.',
   },
   compact: {
     usage: '/compact',
@@ -35,7 +87,8 @@ export const SLASH = {
     summary: 'Show catalog models, or switch to one',
     detail:
       'No argument lists ids the inference API returned.\n' +
-      'Pass an id to use it for the next turn: /model qwen-3-8b',
+      'Pass an id to use it for the next turn: /model qwen-3-8b\n' +
+      'Bracket remembers the last model for new chats and the next launch.',
   },
   yolo: {
     usage: '/yolo [on|off]',
@@ -59,7 +112,7 @@ export const SLASH = {
     usage: '/settings',
     summary: 'Show labeled inference options',
     detail:
-      'Stream, thinking, region, vet, and security — each with its current value\n' +
+      'Stream, thinking, region, vet, and security, each with its current value\n' +
       'and a short explanation. Change them with the matching slash command.\n' +
       'The banner line is a compact reminder of the same five fields.',
   },
@@ -69,7 +122,7 @@ export const SLASH = {
     detail:
       'On: the API streams tokens. That requires vet 1 and security tier1;\n' +
       'Bracket sets those headers for you.\n' +
-      'Off: wait for the full completion. Needed for vet 2–3 or tier2.5.\n' +
+      'Off: wait for the full completion. Needed for vet 2-3 or tier2.5.\n' +
       'Bare /stream toggles.',
   },
   think: {
@@ -95,8 +148,8 @@ export const SLASH = {
     summary: 'How many replica checks before return',
     detail:
       '1  one check (required for streaming)\n' +
-      '2  two checks — turns streaming off\n' +
-      '3  three checks — turns streaming off\n' +
+      '2  two checks (turns streaming off)\n' +
+      '3  three checks (turns streaming off)\n' +
       'Sent as X-Scalattice-Vet-Replicas. Higher values cost more. No argument shows help.',
   },
   security: {
@@ -104,12 +157,52 @@ export const SLASH = {
     summary: 'Routing security policy',
     detail:
       'tier1    standard routing (required for streaming)\n' +
-      'tier2.5  stricter policy — turns streaming off\n' +
+      'tier2.5  stricter policy (turns streaming off)\n' +
       'Sent as X-Scalattice-Security. No argument shows this help and the current value.',
+  },
+  ls: {
+    usage: '/ls [path]',
+    summary: 'List a directory in the workspace',
+    detail: 'Same as the list_dir tool. Default is the workspace root.',
+  },
+  read: {
+    usage: '/read <path>',
+    summary: 'Read a workspace file',
+    detail: 'Same as the read_file tool. Tab completes paths.',
+  },
+  grep: {
+    usage: '/grep <pattern> [path]',
+    summary: 'Search file contents',
+    detail: 'JavaScript regex, no surrounding slashes. Optional path limits the search.',
+  },
+  glob: {
+    usage: '/glob <pattern>',
+    summary: 'Find files by glob',
+    detail: 'Example: /glob **/*.js',
+  },
+  search: {
+    usage: '/search <query>',
+    summary: 'Search the public web',
+    detail: 'Same as the web_search tool. Live results, not training data.',
+  },
+  fetch: {
+    usage: '/fetch <url>',
+    summary: 'Fetch a public URL as text',
+    detail: 'Same as the web_fetch tool. http(s) only. HTML is stripped to readable text.',
+  },
+  bash: {
+    usage: '/bash <command>',
+    summary: 'Run a shell command in the workspace',
+    detail: 'Same as the bash tool. Asks before running unless yolo is on.',
+  },
+  tools: {
+    usage: '/tools',
+    summary: 'List tools the model can call',
+    detail: 'Shows bash, read_file, edit_file, web_search, web_fetch, and the rest. /bash /read /ls /grep /glob /search /fetch run some of them yourself.',
   },
 };
 
-function canonSlash(name) {
+export function canonSlash(name) {
   const key = String(name || '')
     .trim()
     .replace(/^\//, '')
@@ -180,7 +273,7 @@ export function settingsBlock(settings = {}) {
     [
       'Vet',
       String(stream ? 1 : s.vet || 1),
-      'Replica checks (1–3). Above 1 turns streaming off.',
+      'Replica checks (1-3). Above 1 turns streaming off.',
     ],
     [
       'Security',
@@ -205,4 +298,154 @@ export function settingsBlock(settings = {}) {
 export function settingNote(title, value, detail = '') {
   const head = `${title}: ${value}`;
   return detail ? `${head}\n${detail}` : head;
+}
+
+function commonPrefix(items) {
+  if (!items.length) return '';
+  let prefix = String(items[0]);
+  for (const item of items) {
+    const s = String(item);
+    let i = 0;
+    while (i < prefix.length && i < s.length && prefix[i] === s[i]) i += 1;
+    prefix = prefix.slice(0, i);
+    if (!prefix) break;
+  }
+  return prefix;
+}
+
+export function completePath(prefix, cwd) {
+  const root = cwd || process.cwd();
+  const raw = String(prefix || '').replaceAll('\\', '/');
+  const hasDir = raw.includes('/');
+  const dirPart = hasDir ? path.posix.dirname(raw) : '.';
+  const base = hasDir ? path.posix.basename(raw) : raw;
+  let absDir;
+  try {
+    absDir = path.resolve(root, dirPart === '.' ? '' : dirPart);
+  } catch {
+    return [];
+  }
+  let names = [];
+  try {
+    names = fs.readdirSync(absDir);
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const name of names.sort()) {
+    if (name.startsWith('.')) continue;
+    if (base && !name.startsWith(base)) continue;
+    const rel = dirPart === '.' ? name : `${dirPart}/${name}`;
+    let isDir = false;
+    try {
+      isDir = fs.statSync(path.join(absDir, name)).isDirectory();
+    } catch {
+      continue;
+    }
+    out.push(isDir ? `${rel}/` : rel);
+    if (out.length >= 40) break;
+  }
+  return out;
+}
+
+function commandNames() {
+  return [...new Set([...Object.keys(SLASH), ...Object.keys(ALIAS)])].sort();
+}
+
+function argCandidates(cmd, last, ctx, line) {
+  switch (cmd) {
+    case 'help':
+      return Object.keys(SLASH);
+    case 'stream':
+    case 'think':
+    case 'yolo':
+      return ['on', 'off'];
+    case 'region':
+      return ['auto', 'us', 'eu', 'ap'];
+    case 'vet':
+      return ['1', '2', '3'];
+    case 'security':
+      return ['tier1', 'tier2.5'];
+    case 'chats':
+      return ['all'];
+    case 'model':
+      return (ctx.models || []).map(String);
+    case 'chat':
+    case 'forget':
+      return (ctx.chats || []).flatMap((row, i) =>
+        [String(i + 1), row.id, String(row.id || '').slice(0, 8)].filter(Boolean)
+      );
+    case 'read':
+    case 'ls':
+    case 'glob':
+      return completePath(last, ctx.cwd);
+    case 'grep': {
+      const afterCmd = line.slice(line.indexOf(' ') + 1);
+      const tokens = afterCmd.trim() ? afterCmd.trim().split(/\s+/) : [];
+      const first = tokens.length <= 1 && !/\s$/.test(line);
+      return first ? [] : completePath(last, ctx.cwd);
+    }
+    case 'bash':
+      if (last.startsWith('./') || last.startsWith('/') || last.includes('/')) {
+        return completePath(last, ctx.cwd);
+      }
+      return [];
+    default:
+      return [];
+  }
+}
+
+function emptyComplete(line) {
+  return { completed: line, matches: [], hint: '' };
+}
+
+export function completeSlash(input, ctx = {}) {
+  const line = String(input || '');
+  if (!line.startsWith('/')) return emptyComplete(line);
+
+  const space = line.indexOf(' ');
+  if (space === -1) {
+    const prefix = line.slice(1).toLowerCase();
+    const hits = commandNames().filter((n) => n.startsWith(prefix));
+    if (!hits.length) return emptyComplete(line);
+    const canons = [...new Set(hits.map((n) => canonSlash(n)))];
+    if (canons.length === 1) {
+      const done = `/${canons[0]} `;
+      return { completed: done, matches: [done], hint: SLASH[canons[0]]?.summary || '' };
+    }
+    const labels = canons.map((n) => `/${n}`);
+    const common = commonPrefix(labels);
+    return {
+      completed: common.length > line.length ? common : line,
+      matches: labels.map((n) => `${n} `),
+      hint: labels.join('  '),
+    };
+  }
+
+  const cmd = canonSlash(line.slice(1, space));
+  const last = /\s$/.test(line) ? '' : line.slice(line.search(/\S+$/));
+  const head = line.slice(0, line.length - last.length);
+  const hits = argCandidates(cmd, last, ctx, line).filter((c) =>
+    String(c).toLowerCase().startsWith(String(last).toLowerCase())
+  );
+  const uniq = [...new Set(hits)];
+  if (!uniq.length) return emptyComplete(line);
+  if (!last && uniq.length > 1) {
+    return {
+      completed: line,
+      matches: uniq.map((token) => `${head}${token}${String(token).endsWith('/') ? '' : ' '}`),
+      hint: uniq.slice(0, 10).join('  '),
+    };
+  }
+  if (uniq.length === 1) {
+    const token = uniq[0];
+    const done = `${head}${token}${String(token).endsWith('/') ? '' : ' '}`;
+    return { completed: done, matches: [done], hint: '' };
+  }
+  const common = commonPrefix(uniq);
+  return {
+    completed: common.length > last.length ? `${head}${common}` : line,
+    matches: uniq.map((token) => `${head}${token}`),
+    hint: uniq.slice(0, 10).join('  '),
+  };
 }

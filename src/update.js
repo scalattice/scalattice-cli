@@ -104,6 +104,8 @@ function prefixWritable(prefix) {
 
 export function defaultInstall(prefix, { inherit = false } = {}) {
   const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+  const bundled = path.join(path.dirname(process.execPath), npm);
+  const bin = fs.existsSync(bundled) ? bundled : npm;
   const args = [
     'install',
     '-g',
@@ -114,10 +116,14 @@ export function defaultInstall(prefix, { inherit = false } = {}) {
     prefix,
     `${PKG_NAME}@latest`,
   ];
-  const r = spawnSync(npm, args, {
+  const r = spawnSync(bin, args, {
     encoding: 'utf8',
     timeout: 120_000,
     stdio: inherit ? 'inherit' : ['ignore', 'pipe', 'pipe'],
+    env: {
+      ...process.env,
+      PATH: `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH || ''}`,
+    },
   });
   if (r.status !== 0) {
     const err = String(r.stderr || r.stdout || 'npm install failed').trim().slice(0, 600);

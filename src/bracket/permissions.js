@@ -1,6 +1,14 @@
 import { prompt } from '../io.js';
 
-const READ_TOOLS = new Set(['read_file', 'glob', 'grep', 'list_dir', 'todo_write']);
+const READ_TOOLS = new Set([
+  'read_file',
+  'glob',
+  'grep',
+  'list_dir',
+  'todo_write',
+  'web_search',
+  'web_fetch',
+]);
 
 export function createPermissions({ yolo = false, interactive = true, ask } = {}) {
   const always = new Set();
