@@ -9,7 +9,7 @@ const bin = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../bin/s
 function run(args) {
   return spawnSync(process.execPath, [bin, ...args], {
     encoding: 'utf8',
-    env: { ...process.env, SCALATTICE_CONFIG_DIR: '/tmp/scalattice-cli-test-empty' },
+    env: { ...process.env, SCALATTICE_CONFIG_DIR: '/tmp/scalattice-cli-test-empty', SCALATTICE_NO_UPDATE: '1' },
   });
 }
 
@@ -18,6 +18,7 @@ test('scalattice --help still documents login and mcp', () => {
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /scalattice login/);
   assert.match(r.stdout, /scalattice mcp/);
+  assert.match(r.stdout, /scalattice update/);
   assert.match(r.stdout, /scalattice bracket/);
   assert.doesNotMatch(r.stdout, /scalattice agent\b/);
 });
@@ -113,6 +114,7 @@ test('whoami reports an env inference key even without a Cloud session', () => {
     env: {
       ...process.env,
       SCALATTICE_CONFIG_DIR: '/tmp/scalattice-cli-test-empty',
+      SCALATTICE_NO_UPDATE: '1',
       SCALATTICE_SESSION_TOKEN: '',
       SCALATTICE_MGMT_KEY: '',
       SCALATTICE_API_KEY: 'slt_abcdefghijklmnopqrstuvwx',

@@ -111,12 +111,28 @@ test('think splitter holds partial tags and splits reasoning', async () => {
   assert.deepEqual(s.pushThinking(' extra'), [{ type: 'thinking', text: ' extra' }]);
 });
 
+test('inferenceUrl does not double /v1', async () => {
+  const { inferenceUrl } = await import('./client.js');
+  assert.equal(
+    inferenceUrl('https://api.scalattice.cloud/v1', '/v1/chat/completions'),
+    'https://api.scalattice.cloud/v1/chat/completions'
+  );
+  assert.equal(
+    inferenceUrl('https://api.scalattice.cloud/v1', '/chat/completions'),
+    'https://api.scalattice.cloud/v1/chat/completions'
+  );
+  assert.equal(
+    inferenceUrl('https://api.scalattice.cloud', 'models'),
+    'https://api.scalattice.cloud/v1/models'
+  );
+});
+
 test('chatCompletion streams by default and sends native headers', async () => {
   const { chatCompletion } = await import('./client.js');
   const orig = globalThis.fetch;
   let captured;
-  globalThis.fetch = async (_url, opts) => {
-    captured = opts;
+  globalThis.fetch = async (url, opts) => {
+    captured = { url, opts };
     const sse = [
       `data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: 'plan' } }] })}`,
       `data: ${JSON.stringify({ choices: [{ delta: { content: 'hi' } }] })}`,
@@ -134,12 +150,13 @@ test('chatCompletion streams by default and sends native headers', async () => {
       messages: [{ role: 'user', content: 'hello' }],
       onDelta: (p) => parts.push(p),
     });
-    const body = JSON.parse(captured.body);
+    const body = JSON.parse(captured.opts.body);
+    assert.equal(captured.url, 'https://api.example/v1/chat/completions');
     assert.equal(body.stream, true);
     assert.match(body.messages.at(-1).content, /\/think$/);
-    assert.equal(captured.headers['X-Scalattice-Vet-Replicas'], '1');
-    assert.equal(captured.headers['X-Scalattice-Security'], 'tier1');
-    assert.equal(captured.headers['X-Scalattice-Region'], 'auto');
+    assert.equal(captured.opts.headers['X-Scalattice-Vet-Replicas'], '1');
+    assert.equal(captured.opts.headers['X-Scalattice-Security'], 'tier1');
+    assert.equal(captured.opts.headers['X-Scalattice-Region'], 'auto');
     assert.equal(msg.content, 'hi');
     assert.equal(msg.reasoning_content, 'plan');
     assert.deepEqual(

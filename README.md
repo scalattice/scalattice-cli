@@ -80,7 +80,8 @@ Inside the prompt, drop the `scalattice` prefix. From a normal terminal, keep it
 | `account keys list|create|roll|revoke` | Account management keys (prints secret once; not stored) |
 | `init` | Print env exports (`SCALATTICE_API_KEY` plus OpenAI SDK aliases) |
 | `credits` | Wallet + model grants |
-| `whoami` | Show session / account |
+| `whoami` | Show CLI version / session / account |
+| `update` | Check npm and install `scalattice-cli@latest` into this prefix |
 | `provider machines` | List fleet (id, status, token last four) |
 | `provider machines create` | Add a machine (prints `slt_provider_…` once) |
 | `provider machines roll` | New token for an existing machine (prints once) |
@@ -95,7 +96,9 @@ Inside the prompt, drop the `scalattice` prefix. From a normal terminal, keep it
 
 Config: `~/.config/scalattice/config.json` (mode `0600`) — session + email only. Keys are never written there. Bracket may store its own inference key at `~/.config/scalattice/bracket.key` (also `0600`).
 
-Env overrides: `SCALATTICE_CLOUD_URL`, `SCALATTICE_API_URL`, `SCALATTICE_API_KEY`, `SCALATTICE_MGMT_KEY`, `SCALATTICE_SESSION_TOKEN`, `SCALATTICE_BRACKET_MODEL`, `SCALATTICE_STREAM`, `SCALATTICE_THINKING`, `SCALATTICE_REGION`, `SCALATTICE_VET_REPLICAS`, `SCALATTICE_SECURITY`.
+Env overrides: `SCALATTICE_CLOUD_URL`, `SCALATTICE_API_URL`, `SCALATTICE_API_KEY`, `SCALATTICE_MGMT_KEY`, `SCALATTICE_SESSION_TOKEN`, `SCALATTICE_BRACKET_MODEL`, `SCALATTICE_STREAM`, `SCALATTICE_THINKING`, `SCALATTICE_REGION`, `SCALATTICE_VET_REPLICAS`, `SCALATTICE_SECURITY`, `SCALATTICE_NO_UPDATE`.
+
+On a terminal the CLI checks npm every few hours and updates itself when the install prefix is writable. `scalattice update` does it immediately. `--no-update` or `SCALATTICE_NO_UPDATE=1` skips that. MCP and `init` never auto-update (their stdout is consumed).
 
 ## Bracket
 

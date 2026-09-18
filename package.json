@@ -17,8 +17,8 @@
   ],
   "scripts": {
     "start": "node ./bin/scalattice.js",
-    "test": "node --test src/bracket/*.test.js",
-    "prepublishOnly": "node ./bin/scalattice.js --help >/dev/null && node --test src/bracket/*.test.js"
+      "test": "node --test src",
+      "prepublishOnly": "node ./bin/scalattice.js --help >/dev/null && node --test src"
   },
   "license": "MIT",
   "author": "Scalattice",
