@@ -95,7 +95,7 @@ Inside the prompt, drop the `scalattice` prefix. From a normal terminal, keep it
 
 Config: `~/.config/scalattice/config.json` (mode `0600`) — session + email only. Keys are never written there. Bracket may store its own inference key at `~/.config/scalattice/bracket.key` (also `0600`).
 
-Env overrides: `SCALATTICE_CLOUD_URL`, `SCALATTICE_API_URL`, `SCALATTICE_API_KEY`, `SCALATTICE_MGMT_KEY`, `SCALATTICE_SESSION_TOKEN`, `SCALATTICE_BRACKET_MODEL`.
+Env overrides: `SCALATTICE_CLOUD_URL`, `SCALATTICE_API_URL`, `SCALATTICE_API_KEY`, `SCALATTICE_MGMT_KEY`, `SCALATTICE_SESSION_TOKEN`, `SCALATTICE_BRACKET_MODEL`, `SCALATTICE_STREAM`, `SCALATTICE_THINKING`, `SCALATTICE_REGION`, `SCALATTICE_VET_REPLICAS`, `SCALATTICE_SECURITY`.
 
 ## Bracket
 
@@ -111,7 +111,9 @@ scalattice bracket --yolo "apply the refactor"
 
 Login is enough: Bracket mints a **developer inference key** (`slt_…`) named `CLI bracket` into `~/.config/scalattice/bracket.key`. That is the key type chat completions use. An account management key (`slt_mgmt_…`) cannot call the inference API. To set a key yourself: `export SCALATTICE_API_KEY=slt_…` (`OPENAI_API_KEY` is accepted as an alias). Default model is `qwen-3-coder-30b-a3b` (override with `--model` or `SCALATTICE_BRACKET_MODEL`).
 
-Inside the prompt: type in the boxed input. `/help` `/exit` `/clear` `/compact` `/model` `/yolo` `/credits` `/whoami`. Shell and file writes ask before running unless you pass `--yolo` (also `--auto` / `--dangerously-skip-permissions`).
+Streaming is on by default and sends `X-Scalattice-Vet-Replicas: 1` plus `X-Scalattice-Security: tier1` (required by the API). Thinking is on by default. Toggle with `--no-stream`, `--no-think`, `--region auto|us|eu|ap`, `--vet 1|2|3`, `--security tier1|tier2.5`, or the matching slash commands. Multi-vet or `tier2.5` turns streaming off.
+
+Inside the prompt: type in the boxed input. `/help` `/exit` `/clear` `/compact` `/model` `/yolo` `/credits` `/whoami` `/settings` `/stream` `/think` `/region` `/vet` `/security`. Shell and file writes ask before running unless you pass `--yolo` (also `--auto` / `--dangerously-skip-permissions`).
 
 `--print` is one-shot (CI / scripts) and does not open the TUI. Writes and shell still need `--yolo` when stdin is not a TTY.
 

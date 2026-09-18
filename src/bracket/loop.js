@@ -4,6 +4,12 @@ import { toolSummary } from './tools.js';
 
 const COMPACT_AFTER = 180_000;
 
+function historyMessage(assistant) {
+  const msg = { role: 'assistant', content: assistant.content ?? null };
+  if (assistant.tool_calls?.length) msg.tool_calls = assistant.tool_calls;
+  return msg;
+}
+
 export async function runLoop({
   messages,
   tools,
@@ -13,6 +19,7 @@ export async function runLoop({
   runTool,
   maxTurns = 40,
   stream = true,
+  settings,
   signal,
   onDelta,
   onTool,
@@ -20,41 +27,25 @@ export async function runLoop({
   onAssistantEnd,
 } = {}) {
   let history = messages;
+  const useStream = settings?.stream !== undefined ? settings.stream !== false : stream !== false;
   for (let turn = 0; turn < maxTurns; turn += 1) {
     if (estimateChars(history) > COMPACT_AFTER) {
       history = compactMessages(history, { keep: 16 });
     }
 
-    let assistant;
-    try {
-      assistant = await chatCompletion({
-        apiUrl,
-        apiKey,
-        messages: history,
-        tools,
-        model,
-        stream,
-        signal,
-        onDelta,
-      });
-    } catch (err) {
-      if (stream && /aborted/i.test(err?.message || '')) throw err;
-      if (stream) {
-        assistant = await chatCompletion({
-          apiUrl,
-          apiKey,
-          messages: history,
-          tools,
-          model,
-          stream: false,
-          signal,
-        });
-      } else {
-        throw err;
-      }
-    }
+    const assistant = await chatCompletion({
+      apiUrl,
+      apiKey,
+      messages: history,
+      tools,
+      model,
+      stream: useStream,
+      settings,
+      signal,
+      onDelta,
+    });
 
-    history = [...history, assistant];
+    history = [...history, historyMessage(assistant)];
     onAssistantEnd?.(assistant);
 
     const calls = assistant.tool_calls || [];

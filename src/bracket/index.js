@@ -11,6 +11,7 @@ import { buildSystemPrompt, compactMessages, pickDefaultModel } from './prompt.j
 import { loadLastSession, saveSession } from './session.js';
 import { createToolRunner, TOOL_DEFS, toolSummary } from './tools.js';
 import { createTui } from './tui.js';
+import { defaultSettings, parseBoolArg, patchSettings, settingsLine } from './settings.js';
 
 export const BRACKET_HELP = `scalattice bracket — coding harness (reads/edits files, runs commands)
 
@@ -34,15 +35,34 @@ Flags:
       Stop after this many model turns (default 40)
   --continue, -c
       Resume the last Bracket session in this workspace
+  --stream / --no-stream
+      SSE streaming (default on). Streaming needs vet 1 and tier1.
+  --think / --no-think
+      Request model thinking on the last user turn (default on)
+  --region auto|us|eu|ap
+      X-Scalattice-Region (default auto)
+  --vet 1|2|3
+      X-Scalattice-Vet-Replicas. Values above 1 turn streaming off.
+  --security tier1|tier2.5
+      X-Scalattice-Security. tier2.5 turns streaming off.
+
+Env: SCALATTICE_STREAM, SCALATTICE_THINKING, SCALATTICE_REGION,
+     SCALATTICE_VET_REPLICAS, SCALATTICE_SECURITY
 
 Inside Bracket:
   /help  /exit  /clear  /compact  /model [id]  /yolo [on|off]  /credits  /whoami
+  /settings  /stream [on|off]  /think [on|off]  /region [auto|us|eu|ap]
+  /vet [1|2|3]  /security [tier1|tier2.5]
 
 Auth: sign in (session). Bracket then mints a developer inference key (slt_…).
 Do not use slt_mgmt_… or slt_provider_…. To set a key yourself:
   export SCALATTICE_API_KEY=slt_…
 A minted key may be stored at ~/.config/scalattice/bracket.key (mode 0600).
 `;
+
+function deltaPart(part) {
+  return typeof part === 'string' ? { type: 'content', text: part } : part;
+}
 
 async function completeTurn({
   messages,
@@ -52,13 +72,14 @@ async function completeTurn({
   permissions,
   todos,
   maxTurns,
-  stream,
+  settings,
   ui,
 }) {
   const ac = new AbortController();
   const onSig = () => ac.abort();
   process.once('SIGINT', onSig);
   const runTool = createToolRunner({ cwd, permissions, todos });
+  const stream = settings?.stream !== false;
   try {
     ui?.startAssistant?.();
     const result = await runLoop({
@@ -70,10 +91,12 @@ async function completeTurn({
       runTool,
       maxTurns,
       stream,
+      settings,
       signal: ac.signal,
-      onDelta: (chunk) => {
-        if (ui) ui.writeAssistant(chunk);
-        else if (stream) process.stdout.write(chunk);
+      onDelta: (part) => {
+        const p = deltaPart(part);
+        if (ui) ui.writeDelta(p);
+        else if (stream && p.type === 'content' && p.text) process.stdout.write(p.text);
       },
       onTool: ({ summary }) => {
         if (ui) ui.tool(summary);
@@ -109,6 +132,7 @@ export async function cmdBracket(opts = {}) {
   const printMode = Boolean(flags.print);
   const interactive = !printMode && input.isTTY && output.isTTY;
   const maxTurns = Number.isFinite(flags.maxTurns) && flags.maxTurns > 0 ? flags.maxTurns : 40;
+  let settings = defaultSettings(flags);
 
   if (printMode && !promptText) {
     promptText = fs.readFileSync(0, 'utf8').trim();
@@ -147,7 +171,7 @@ export async function cmdBracket(opts = {}) {
       permissions,
       todos,
       maxTurns,
-      stream: Boolean(output.isTTY),
+      settings,
     });
     saveSession({ cwd, model, messages });
     return;
@@ -160,19 +184,31 @@ export async function cmdBracket(opts = {}) {
     ask: (toolName, summary) => ui.approve(toolName, summary),
   });
   const persist = () => saveSession({ cwd, model, messages });
+  let billing = null;
+  const syncHeader = () => {
+    ui.updateBanner({
+      model,
+      yolo: permissions.yolo,
+      policy: settingsLine(settings),
+      credits: bannerCreditLines(billing, model),
+    });
+  };
 
   const handleSlash = async (line) => {
     const [cmd, ...rest] = line.slice(1).trim().split(/\s+/);
     const arg = rest.join(' ');
     switch (cmd) {
       case 'help':
-        ui.note(BRACKET_HELP.trim().split('\n').slice(0, 12).join('\n  '));
+        ui.note(
+          '/help /exit /clear /compact /model /yolo /credits /whoami /settings /stream /think /region /vet /security'
+        );
         return 'ok';
       case 'exit':
       case 'quit':
         return 'exit';
       case 'clear':
         messages = [{ role: 'system', content: buildSystemPrompt({ cwd, model, yolo: permissions.yolo }) }];
+        ui.clearTranscript();
         ui.note('Conversation cleared.');
         return 'ok';
       case 'compact':
@@ -182,6 +218,7 @@ export async function cmdBracket(opts = {}) {
       case 'model':
         if (arg) {
           model = arg;
+          syncHeader();
           ui.note(`Model set to ${model}`);
         } else {
           ui.note(modelIds.length ? modelIds.join(', ') : model);
@@ -195,6 +232,7 @@ export async function cmdBracket(opts = {}) {
               ? false
               : !permissions.yolo;
         permissions.setYolo(next);
+        syncHeader();
         ui.note(next ? 'yolo on' : 'yolo off');
         return 'ok';
       }
@@ -203,6 +241,54 @@ export async function cmdBracket(opts = {}) {
         return 'ok';
       case 'whoami':
         await cmdWhoami();
+        return 'ok';
+      case 'settings':
+        ui.note(settingsLine(settings));
+        return 'ok';
+      case 'stream':
+        try {
+          settings = patchSettings(settings, { stream: parseBoolArg(arg, settings.stream) });
+          syncHeader();
+          ui.note(settingsLine(settings));
+        } catch (err) {
+          ui.note(err?.message || String(err));
+        }
+        return 'ok';
+      case 'think':
+        try {
+          settings = patchSettings(settings, { thinking: parseBoolArg(arg, settings.thinking) });
+          syncHeader();
+          ui.note(settingsLine(settings));
+        } catch (err) {
+          ui.note(err?.message || String(err));
+        }
+        return 'ok';
+      case 'region':
+        if (!arg) {
+          ui.note(`region ${settings.region} (auto|us|eu|ap)`);
+          return 'ok';
+        }
+        settings = patchSettings(settings, { region: arg });
+        syncHeader();
+        ui.note(settingsLine(settings));
+        return 'ok';
+      case 'vet':
+        if (!arg) {
+          ui.note(`vet ${settings.vet} (1–3; stream needs 1)`);
+          return 'ok';
+        }
+        settings = patchSettings(settings, { vet: Number(arg) });
+        syncHeader();
+        ui.note(settingsLine(settings));
+        return 'ok';
+      case 'security':
+        if (!arg) {
+          ui.note(`security ${settings.security} (tier1|tier2.5; stream needs tier1)`);
+          return 'ok';
+        }
+        settings = patchSettings(settings, { security: arg });
+        syncHeader();
+        ui.note(settingsLine(settings));
         return 'ok';
       default:
         ui.note(`Unknown slash command: /${cmd}. Try /help.`);
@@ -221,7 +307,7 @@ export async function cmdBracket(opts = {}) {
         permissions,
         todos,
         maxTurns,
-        stream: true,
+        settings,
         ui,
       });
     } catch (err) {
@@ -236,12 +322,13 @@ export async function cmdBracket(opts = {}) {
 
   ui.enter();
   try {
-    const billing = await loadBilling(auth);
+    billing = await loadBilling(auth);
     ui.banner({
       cwd,
       model,
       yolo: permissions.yolo,
       email: auth.email || '',
+      policy: settingsLine(settings),
       credits: bannerCreditLines(billing, model),
     });
     if (flags.continue) ui.note('Continued last session.');

@@ -55,3 +55,98 @@ test('parse JSON tool_call block', () => {
   assert.equal(calls[0].function.name, 'read_file');
   assert.equal(JSON.parse(calls[0].function.arguments).path, 'README.md');
 });
+
+test('default settings stream and think with compatible headers', async () => {
+  const { defaultSettings, routingHeaders, patchSettings, settingsLine } = await import('./settings.js');
+  const empty = {};
+  const s = defaultSettings({}, empty);
+  assert.equal(s.stream, true);
+  assert.equal(s.thinking, true);
+  assert.deepEqual(routingHeaders(s), {
+    'X-Scalattice-Region': 'auto',
+    'X-Scalattice-Vet-Replicas': '1',
+    'X-Scalattice-Security': 'tier1',
+  });
+  assert.match(settingsLine(s), /stream · think · auto · vet 1 · tier1/);
+
+  const vet2 = defaultSettings({ vet: 2 }, empty);
+  assert.equal(vet2.stream, false);
+  assert.equal(vet2.vet, 2);
+  assert.equal(routingHeaders(vet2)['X-Scalattice-Vet-Replicas'], '2');
+
+  const streamWins = defaultSettings({ stream: true, vet: 2 }, empty);
+  assert.equal(streamWins.stream, true);
+  assert.equal(streamWins.vet, 1);
+
+  const off = patchSettings(s, { stream: false, security: 'tier2.5' });
+  assert.equal(off.stream, false);
+  assert.equal(off.security, 'tier2.5');
+});
+
+test('thinking tag is applied to the last user turn only', async () => {
+  const { applyThinkingTag } = await import('./think.js');
+  const msgs = [
+    { role: 'system', content: 'sys' },
+    { role: 'user', content: 'one' },
+    { role: 'assistant', content: 'ok' },
+    { role: 'user', content: 'two /no_think' },
+  ];
+  const on = applyThinkingTag(msgs, true);
+  assert.equal(on[1].content, 'one');
+  assert.equal(on[3].content, 'two\n/think');
+  assert.equal(msgs[3].content, 'two /no_think');
+  const off = applyThinkingTag(msgs, false);
+  assert.equal(off[3].content, 'two\n/no_think');
+});
+
+test('think splitter holds partial tags and splits reasoning', async () => {
+  const { createThinkSplitter } = await import('./think.js');
+  const s = createThinkSplitter();
+  const a = s.push('<thi');
+  assert.deepEqual(a, []);
+  const b = s.push('nk>plan</th');
+  assert.deepEqual(b, [{ type: 'thinking', text: 'plan' }]);
+  const c = s.push('ink>answer');
+  assert.deepEqual(c, [{ type: 'content', text: 'answer' }]);
+  assert.deepEqual(s.pushThinking(' extra'), [{ type: 'thinking', text: ' extra' }]);
+});
+
+test('chatCompletion streams by default and sends native headers', async () => {
+  const { chatCompletion } = await import('./client.js');
+  const orig = globalThis.fetch;
+  let captured;
+  globalThis.fetch = async (_url, opts) => {
+    captured = opts;
+    const sse = [
+      `data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: 'plan' } }] })}`,
+      `data: ${JSON.stringify({ choices: [{ delta: { content: 'hi' } }] })}`,
+      'data: [DONE]',
+      '',
+    ].join('\n');
+    return new Response(sse, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+  };
+  try {
+    const parts = [];
+    const msg = await chatCompletion({
+      apiUrl: 'https://api.example',
+      apiKey: 'slt_x',
+      model: 'qwen',
+      messages: [{ role: 'user', content: 'hello' }],
+      onDelta: (p) => parts.push(p),
+    });
+    const body = JSON.parse(captured.body);
+    assert.equal(body.stream, true);
+    assert.match(body.messages.at(-1).content, /\/think$/);
+    assert.equal(captured.headers['X-Scalattice-Vet-Replicas'], '1');
+    assert.equal(captured.headers['X-Scalattice-Security'], 'tier1');
+    assert.equal(captured.headers['X-Scalattice-Region'], 'auto');
+    assert.equal(msg.content, 'hi');
+    assert.equal(msg.reasoning_content, 'plan');
+    assert.deepEqual(
+      parts.map((p) => p.type),
+      ['thinking', 'content']
+    );
+  } finally {
+    globalThis.fetch = orig;
+  }
+});

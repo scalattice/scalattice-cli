@@ -44,7 +44,7 @@ Usage:
   scalattice credits
   scalattice whoami
   scalattice mcp
-  scalattice bracket ["prompt"] [--yolo] [--print] [--model ID]
+  scalattice bracket ["prompt"] [--yolo] [--print] [--model ID] [--no-stream] [--no-think]
 
 Bracket:
   scalattice bracket
@@ -78,7 +78,9 @@ Quick start:
 
 Config file: ${configPath()}
 Env: SCALATTICE_CLOUD_URL, SCALATTICE_API_URL, SCALATTICE_SESSION_TOKEN,
-  SCALATTICE_API_KEY, OPENAI_API_KEY, SCALATTICE_MGMT_KEY, SCALATTICE_BRACKET_MODEL
+  SCALATTICE_API_KEY, OPENAI_API_KEY, SCALATTICE_MGMT_KEY, SCALATTICE_BRACKET_MODEL,
+  SCALATTICE_STREAM, SCALATTICE_THINKING, SCALATTICE_REGION, SCALATTICE_VET_REPLICAS,
+  SCALATTICE_SECURITY
 `;
 
 const SHELL_HELP = `Commands:
@@ -177,6 +179,13 @@ function parseArgs(argv) {
     else if (a === '--model') flags.model = argv[++i];
     else if (a === '--cwd') flags.cwd = argv[++i];
     else if (a === '--max-turns') flags.maxTurns = Number(argv[++i]);
+    else if (a === '--stream') flags.stream = true;
+    else if (a === '--no-stream') flags.noStream = true;
+    else if (a === '--think') flags.think = true;
+    else if (a === '--no-think') flags.noThink = true;
+    else if (a === '--region') flags.region = argv[++i];
+    else if (a === '--vet') flags.vet = Number(argv[++i]);
+    else if (a === '--security') flags.security = argv[++i];
     else if (a.startsWith('-')) throw new Error(`Unknown flag: ${a}`);
     else positionals.push(a);
   }
