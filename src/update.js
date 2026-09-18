@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -121,14 +122,28 @@ function posixPath(p) {
   return path.resolve(p).replace(/\\/g, '/');
 }
 
-export function rewritePortableWrappers(prefix, { execPath = process.execPath, platform = process.platform } = {}) {
-  if (platform !== 'win32' || !prefix) return false;
-  const nodeHome = path.dirname(execPath);
-  const portable = path.join(prefix, 'runtime', 'node');
-  const resolved = path.resolve(nodeHome);
-  if (resolved !== path.resolve(portable) && resolved !== path.resolve(portable, 'bin')) {
-    return false;
+function portableNodeHomes(prefix, { platform = process.platform, dataHome } = {}) {
+  const homes = [path.join(prefix, 'runtime', 'node')];
+  if (platform !== 'win32') {
+    const base = dataHome || process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
+    homes.push(path.join(base, 'scalattice', 'runtime', 'node'));
   }
+  return homes;
+}
+
+function isPortableExec(execPath, prefix, opts = {}) {
+  const resolved = path.resolve(path.dirname(execPath));
+  return portableNodeHomes(prefix, opts).some(
+    (home) => resolved === path.resolve(home) || resolved === path.resolve(home, 'bin')
+  );
+}
+
+export function rewritePortableWrappers(
+  prefix,
+  { execPath = process.execPath, platform = process.platform, dataHome } = {}
+) {
+  if (!prefix) return false;
+  if (!isPortableExec(execPath, prefix, { platform, dataHome })) return false;
   const cli = [
     path.join(prefix, 'node_modules', 'scalattice-cli', 'bin', 'scalattice.js'),
     path.join(prefix, 'lib', 'node_modules', 'scalattice-cli', 'bin', 'scalattice.js'),
@@ -136,13 +151,24 @@ export function rewritePortableWrappers(prefix, { execPath = process.execPath, p
   if (!cli) return false;
   const node = path.resolve(execPath);
   const cliAbs = path.resolve(cli);
+  const nodeHome = path.dirname(node);
+  if (platform === 'win32') {
+    fs.writeFileSync(
+      path.join(prefix, 'scalattice.cmd'),
+      `@echo off\r\nsetlocal\r\nset "PATH=${path.resolve(nodeHome)};%PATH%"\r\n"${node}" "${cliAbs}" %*\r\n`
+    );
+    fs.writeFileSync(
+      path.join(prefix, 'scalattice'),
+      `#!/bin/sh\nexport PATH="${posixPath(nodeHome)}:$PATH"\nexec "${posixPath(node)}" "${posixPath(cliAbs)}" "$@"\n`
+    );
+    return true;
+  }
+  const binDir = path.join(prefix, 'bin');
+  fs.mkdirSync(binDir, { recursive: true });
   fs.writeFileSync(
-    path.join(prefix, 'scalattice.cmd'),
-    `@echo off\r\nsetlocal\r\nset "PATH=${path.resolve(nodeHome)};%PATH%"\r\n"${node}" "${cliAbs}" %*\r\n`
-  );
-  fs.writeFileSync(
-    path.join(prefix, 'scalattice'),
-    `#!/bin/sh\nexport PATH="${posixPath(nodeHome)}:$PATH"\nexec "${posixPath(node)}" "${posixPath(cliAbs)}" "$@"\n`
+    path.join(binDir, 'scalattice'),
+    `#!/bin/sh\nexport PATH="${posixPath(nodeHome)}:$PATH"\nexec "${posixPath(node)}" "${posixPath(cliAbs)}" "$@"\n`,
+    { mode: 0o755 }
   );
   return true;
 }
