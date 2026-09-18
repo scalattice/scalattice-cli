@@ -13,12 +13,54 @@ import {
 } from './theme.js';
 
 export function stripAnsi(s) {
-  return String(s || '').replace(/\x1b\[[0-9;]*m/g, '');
+  return String(s || '')
+    .replace(/\x1b\]8;[^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
+    .replace(/\x1b\[[0-9;]*m/g, '');
 }
 
 function paint(code, s) {
   if (!s) return '';
   return `${code}${s}${RESET}`;
+}
+
+const OSC8_CLOSE = '\x1b]8;;\x1b\\';
+
+export function httpUrl(raw) {
+  const u = String(raw || '').trim();
+  if (!/^https?:\/\//i.test(u)) return '';
+  if (/[\x1b\x07]/.test(u)) return '';
+  try {
+    const parsed = new URL(u);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return '';
+    if (!parsed.hostname) return '';
+    return parsed.href;
+  } catch {
+    return '';
+  }
+}
+
+export function oscHyperlink(href, label, { color = true } = {}) {
+  const url = httpUrl(href);
+  const text = label || href || url;
+  const painted = color ? paint(`${UNDERLINE}${ACCENT}`, text) : text;
+  if (!url) return painted;
+  return `\x1b]8;;${url}\x1b\\${painted}${OSC8_CLOSE}`;
+}
+
+function takeBareUrl(s) {
+  const angle = /^<(https?:\/\/[^>\s]+)>/i.exec(s);
+  if (angle && httpUrl(angle[1])) {
+    return { raw: angle[1], eaten: angle[0].length };
+  }
+  const m = /^(https?:\/\/[^\s<>\[\]"'`\\]+)/i.exec(s);
+  if (!m) return null;
+  let url = m[1];
+  while (/[.,;:!?]$/.test(url)) url = url.slice(0, -1);
+  while (url.endsWith(')') && url.split('(').length < url.split(')').length) {
+    url = url.slice(0, -1);
+  }
+  if (!httpUrl(url)) return null;
+  return { raw: url, eaten: url.length };
 }
 
 function headingStyle(level) {
@@ -113,11 +155,12 @@ function takeWrap(s, i, mark, style, color) {
   return { text, next: end + mark.length };
 }
 
-export function inlineMarkdown(src, { color = true } = {}) {
+export function inlineMarkdown(src, { color = true, links = true } = {}) {
   const s = String(src || '');
   let i = 0;
   let out = '';
   const wrap = (code, text) => (color ? paint(code, text) : text);
+  const linkify = (href, label) => (links ? oscHyperlink(href, label, { color }) : color ? wrap(`${UNDERLINE}${ACCENT}`, label || href) : label || href);
 
   while (i < s.length) {
     const rest = s.slice(i);
@@ -135,15 +178,23 @@ export function inlineMarkdown(src, { color = true } = {}) {
 
     const img = /^!\[([^\]]*)\]\(([^)]+)\)/.exec(rest);
     if (img) {
-      out += wrap(MUTED, img[1] || img[2]);
+      const alt = img[1] || img[2];
+      out += httpUrl(img[2]) && links ? oscHyperlink(img[2], alt, { color }) : wrap(MUTED, alt);
       i += img[0].length;
       continue;
     }
 
     const link = /^\[([^\]]+)\]\(([^)]+)\)/.exec(rest);
     if (link) {
-      out += wrap(`${UNDERLINE}${ACCENT}`, link[1]);
+      out += linkify(link[2], link[1]);
       i += link[0].length;
+      continue;
+    }
+
+    const bare = takeBareUrl(rest);
+    if (bare) {
+      out += linkify(bare.raw, bare.raw);
+      i += bare.eaten;
       continue;
     }
 
@@ -257,7 +308,7 @@ export function markdownToAnsi(src, { color = true, width = 72 } = {}) {
     if (heading) {
       const level = heading[1].length;
       const title = heading[2].trim();
-      const rendered = inlineMarkdown(title, { color: false });
+      const rendered = inlineMarkdown(title, { color: false, links: color });
       out.push(color ? paint(headingStyle(level), rendered) : rendered);
       if (level <= 2) {
         const underline = '─'.repeat(Math.min(32, Math.max(8, stripAnsi(rendered).length)));

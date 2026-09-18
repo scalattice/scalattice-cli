@@ -4,6 +4,32 @@ import { companyPrompt } from './company.js';
 import { inlineMarkdown, markdownToAnsi, stripAnsi } from './markdown.js';
 import { buildSystemPrompt } from './prompt.js';
 
+test('inline markdown wraps http links in OSC 8 hyperlinks', () => {
+  const md = inlineMarkdown('[docs](https://scalattice.com/cli/)', { color: false });
+  assert.match(md, /\x1b\]8;;https:\/\/scalattice\.com\/cli\/\x1b\\docs\x1b\]8;;\x1b\\/);
+  assert.equal(stripAnsi(md), 'docs');
+
+  const bare = inlineMarkdown('See https://scalattice.cloud/docs for more.', { color: false });
+  assert.match(bare, /\x1b\]8;;https:\/\/scalattice\.cloud\/docs\x1b\\https:\/\/scalattice\.cloud\/docs\x1b\]8;;\x1b\\/);
+  assert.equal(stripAnsi(bare), 'See https://scalattice.cloud/docs for more.');
+
+  const angled = inlineMarkdown('Go <https://example.com/a>.', { color: false });
+  assert.match(angled, /\x1b\]8;;https:\/\/example.com\/a\x1b\\/);
+  assert.equal(stripAnsi(angled), 'Go https://example.com/a.');
+
+  const code = inlineMarkdown('`https://example.com`', { color: false });
+  assert.equal(code, 'https://example.com');
+  assert.doesNotMatch(code, /\x1b\]8;/);
+
+  const js = inlineMarkdown('[x](javascript:void)', { color: false });
+  assert.equal(js, 'x');
+  assert.doesNotMatch(js, /\x1b\]8;/);
+
+  const file = inlineMarkdown('[x](file:///etc/passwd)', { color: false });
+  assert.equal(file, 'x');
+  assert.doesNotMatch(file, /\x1b\]8;/);
+});
+
 test('markdown headings lists rules and emphasis drop the markers', () => {
   const out = stripAnsi(
     markdownToAnsi(
