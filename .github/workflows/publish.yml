@@ -37,12 +37,27 @@ jobs:
           node-version: '20'
           registry-url: https://registry.npmjs.org
 
-      - name: Sync version from npm then bump patch
+      - name: Sync version from npm then bump
         run: |
           set -euo pipefail
           PUBLISHED="$(npm view scalattice-cli version 2>/dev/null || true)"
           LOCAL="$(node -p "require('./package.json').version")"
-          if [ -n "$PUBLISHED" ]; then
+          newer() {
+            node -e '
+              const [a,b] = process.argv.slice(1).map((v) => v.split(".").map(Number));
+              for (let i = 0; i < 3; i += 1) {
+                const x = a[i] || 0, y = b[i] || 0;
+                if (x > y) process.exit(0);
+                if (x < y) process.exit(1);
+              }
+              process.exit(1);
+            ' "$1" "$2"
+          }
+          if [ -z "$PUBLISHED" ]; then
+            echo "No published version yet; using local $LOCAL"
+          elif newer "$LOCAL" "$PUBLISHED"; then
+            echo "Keeping local $LOCAL (newer than npm $PUBLISHED)"
+          else
             echo "Syncing package.json to npm $PUBLISHED (was $LOCAL)"
             PUBLISHED="$PUBLISHED" node -e "
               const fs = require('fs');
@@ -50,10 +65,8 @@ jobs:
               pkg.version = process.env.PUBLISHED;
               fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
             "
-          else
-            echo "No published version yet; bumping from local $LOCAL"
+            npm version patch --no-git-tag-version
           fi
-          npm version patch --no-git-tag-version
           echo "NEXT=$(node -p "require('./package.json').version")" >> "$GITHUB_ENV"
 
       - name: Smoke test
