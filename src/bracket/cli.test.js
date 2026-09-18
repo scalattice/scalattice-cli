@@ -51,6 +51,8 @@ test('banner names Scalattice Bracket and can show credits', async () => {
   assert.match(text, /dev@example.com/);
   assert.match(text, /Wallet \$12\.34/);
   assert.match(text, /stream · think · auto · vet 1 · tier1/);
+  assert.match(text, /[\u2800-\u28FF]/);
+  assert.doesNotMatch(text, /\[ \]\s+Scalattice Bracket/);
   assert.doesNotMatch(text, /coding harness/);
 });
 

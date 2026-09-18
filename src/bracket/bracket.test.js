@@ -204,3 +204,13 @@ test('chatCompletion streams by default and sends native headers', async () => {
     globalThis.fetch = orig;
   }
 });
+
+test('local logo SVG rasterizes to a braille mark', async () => {
+  const { logoBraille, logoCellWidth, LOGO_URL, loadLogoSvg } = await import('./logo.js');
+  assert.match(LOGO_URL, /scalattice\.com\/resources\/logos\/scalattice\/logo-light-noword\.svg/);
+  assert.match(loadLogoSvg(), /<path /);
+  const lines = logoBraille({ width: 12, height: 12, color: false });
+  assert.equal(lines.length, 3);
+  assert.equal(logoCellWidth(lines), 6);
+  assert.match(lines.join('\n'), /[\u2800-\u28FF]/);
+});
