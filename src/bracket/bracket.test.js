@@ -144,6 +144,7 @@ test('slash help explains one command and settings are labeled', async () => {
   assert.match(index, /\/help \[command\]/);
   assert.match(index, /\/settings/);
   assert.match(index, /\/tools/);
+  assert.match(index, /\/key/);
   assert.match(slashHelp('tools'), /Ask in the chat/);
   assert.doesNotMatch(index, /\/bash/);
   assert.doesNotMatch(index, /\/search/);
@@ -181,7 +182,7 @@ test('slash help explains one command and settings are labeled', async () => {
 });
 
 test('tab completes slash commands and arguments', async () => {
-  const { completeSlash } = await import('./slash.js');
+  const { completeSlash, slashHelp } = await import('./slash.js');
   const cmd = completeSlash('/se');
   assert.ok(cmd.matches.some((m) => m.startsWith('/settings')));
   assert.ok(cmd.matches.some((m) => m.startsWith('/security')));
@@ -198,6 +199,12 @@ test('tab completes slash commands and arguments', async () => {
   );
   const models = completeSlash('/model q', { models: ['qwen-3-8b', 'qwen-3-32b'] });
   assert.ok(models.matches.some((m) => m.includes('qwen-3-8b')));
+  const key = completeSlash('/key ');
+  assert.ok(key.matches.some((m) => m.includes('roll')));
+  assert.ok(key.matches.some((m) => m.includes('revoke')));
+  const keyHelp = slashHelp('key');
+  assert.match(keyHelp, /\/key \[show\|roll\|revoke\]/);
+  assert.match(keyHelp, /bracket.key/);
 });
 
 test('thinking tag is applied to the last user turn only', async () => {

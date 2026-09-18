@@ -26,6 +26,7 @@ import {
 } from './commands/provider.js';
 import { runMcpServer } from './commands/mcp.js';
 import { cmdBracket, BRACKET_HELP } from './bracket/index.js';
+import { cmdBracketKey } from './bracket/key.js';
 import { cmdUpdate, maybeAutoUpdate } from './update.js';
 import { print, setPromptInterface } from './io.js';
 import { configPath, loadConfig } from './config.js';
@@ -52,6 +53,7 @@ Bracket:
   scalattice bracket
   scalattice bracket "fix the failing tests"
   scalattice bracket --help
+  scalattice bracket key [show|roll|revoke] [--show]
 
 Developers (inference API keys slt_…):
   scalattice developers keys list|create|roll|revoke
@@ -70,7 +72,8 @@ Provider fleet:
   scalattice provider schedule --machine ID --mode always|paused|windows [--windows JSON]
   scalattice provider reconnect --machine ID
 
-Aliases: developer/developers, provider/providers, machine/machines, key/keys.
+Aliases: developer/developers, provider/providers, machine/machines, key/keys,
+  bracket/brackets.
 
 Quick start:
   1. scalattice login
@@ -96,6 +99,7 @@ const SHELL_HELP = `Commands:
   logout
   credits
   bracket ["prompt"]
+  bracket key [show|roll|revoke]
   developers keys list|create|roll|revoke
   account keys list|create|roll|revoke
   init
@@ -103,7 +107,7 @@ const SHELL_HELP = `Commands:
   help
   exit
 
-Aliases: developer, providers, machine, key
+Aliases: developer, providers, machine, key, bracket, brackets
 One-shot from any terminal: scalattice <command>
 Config: ${configPath()}`;
 
@@ -133,10 +137,17 @@ const CMD_ALIAS = {
   developers: 'developers',
   provider: 'provider',
   providers: 'provider',
+  bracket: 'bracket',
+  brackets: 'bracket',
   backet: 'bracket',
   braket: 'bracket',
   brackett: 'bracket',
 };
+
+function canonCmd(word) {
+  const w = String(word || '').toLowerCase();
+  return CMD_ALIAS[w] || w;
+}
 
 function asKeys(word) {
   return canon(word, { key: 'keys', keys: 'keys' });
@@ -195,6 +206,7 @@ function parseArgs(argv) {
     else if (a === '--security') flags.security = argv[++i];
     else if (a === '--no-update') flags.noUpdate = true;
     else if (a === '--check') flags.check = true;
+    else if (a === '--show') flags.show = true;
     else if (a.startsWith('-')) throw new Error(`Unknown flag: ${a}`);
     else positionals.push(a);
   }
@@ -347,7 +359,7 @@ async function dispatch(argv, { shell = false, rl } = {}) {
   const { flags, positionals } = parseArgs(argv);
   flags.shell = shell;
   const [rawCmd, sub, ...rest] = positionals;
-  const cmd = CMD_ALIAS[rawCmd] || rawCmd;
+  const cmd = canonCmd(rawCmd);
 
   if (!cmd || cmd === 'help' || (flags.help && cmd !== 'bracket')) {
     print((shell ? SHELL_HELP : HELP).trim());
@@ -393,6 +405,10 @@ async function dispatch(argv, { shell = false, rl } = {}) {
     case 'bracket': {
       if (flags.help) {
         print(BRACKET_HELP.trim());
+        break;
+      }
+      if (asKeys(sub) === 'keys') {
+        await cmdBracketKey(rest, flags);
         break;
       }
       const prompt = [sub, ...rest].filter(Boolean).join(' ');
@@ -454,7 +470,7 @@ async function runPrompt() {
 export async function main(argv) {
   const { flags, positionals } = parseArgs(argv);
   const [rawCmd] = positionals;
-  const cmd = CMD_ALIAS[rawCmd] || rawCmd;
+  const cmd = canonCmd(rawCmd);
 
   if (cmd === 'mcp') {
     await runMcpServer();

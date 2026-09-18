@@ -4,6 +4,14 @@ import { stdin as input, stdout as output } from 'node:process';
 import { print } from '../io.js';
 import { loadBilling, bannerCreditLines, creditsText, whoamiText } from '../commands/misc.js';
 import { resolveBracketAuth } from './auth.js';
+import {
+  describeBracketKey,
+  formatBracketKeyStatus,
+  formatRevokeResult,
+  formatRollResult,
+  revokeBracketKey,
+  rollBracketKey,
+} from './key.js';
 import { listModelIds } from './client.js';
 import { runLoop } from './loop.js';
 import { createPermissions } from './permissions.js';
@@ -23,6 +31,7 @@ Usage:
   scalattice bracket --print "summarize this repo"
   scalattice bracket --yolo "apply the refactor"
   scalattice bracket --continue
+  scalattice bracket key [show|roll|revoke] [--show]
 
 Flags:
   --yolo, --auto, --dangerously-skip-permissions
@@ -54,7 +63,7 @@ Env: SCALATTICE_STREAM, SCALATTICE_THINKING, SCALATTICE_REGION,
 Inside Bracket:
   /help [command]     explain one command (try /help stream)
   /settings           labeled stream / think / region / vet / security
-  /stream /think /region /vet /security /model /yolo /credits /whoami
+  /stream /think /region /vet /security /model /yolo /credits /whoami /key
   /chats /chat /new /rename /forget /clear /compact /exit
   /tools
   Tab completes commands, flags, models, and chats.
@@ -62,7 +71,9 @@ Inside Bracket:
 Auth: sign in (session). Bracket then mints a developer inference key (slt_…).
 Do not use slt_mgmt_… or slt_provider_…. To set a key yourself:
   export SCALATTICE_API_KEY=slt_…
-A minted key may be stored at ~/.config/scalattice/bracket.key (mode 0600).
+A minted key is stored at ~/.config/scalattice/bracket.key (mode 0600).
+Manage it with scalattice bracket key or /key inside Bracket (roll / revoke).
+scalattice bracket key --show prints the full secret. /key never does.
 `;
 
 function deltaPart(part) {
@@ -413,6 +424,34 @@ export async function cmdBracket(opts = {}) {
           ui.error(err?.message || String(err));
         }
         return 'ok';
+      case 'key': {
+        const sub = String(rest[0] || 'show').toLowerCase();
+        try {
+          if (!sub || sub === 'show' || sub === 'status') {
+            const { info, cloud } = await describeBracketKey(auth, { sessionSecret: auth.apiKey });
+            ui.note(formatBracketKeyStatus(info, { cloud, sessionSecret: auth.apiKey }));
+            return 'ok';
+          }
+          if (sub === 'roll') {
+            const result = await rollBracketKey(auth, { sessionSecret: auth.apiKey });
+            auth.apiKey = result.secret;
+            auth.keySource = result.envWins ? 'env' : 'bracket.key';
+            ui.note(formatRollResult(result));
+            return 'ok';
+          }
+          if (sub === 'revoke') {
+            const result = await revokeBracketKey(auth, { sessionSecret: auth.apiKey });
+            auth.apiKey = '';
+            auth.keySource = '';
+            ui.note(formatRevokeResult(result));
+            return 'ok';
+          }
+          ui.note(slashHelp('key'));
+        } catch (err) {
+          ui.error(err?.message || String(err));
+        }
+        return 'ok';
+      }
       case 'settings':
         ui.note(settingsBlock(settings));
         return 'ok';

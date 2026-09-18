@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
 import { test } from 'node:test';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,6 +22,7 @@ test('scalattice --help still documents login and mcp', () => {
   assert.match(r.stdout, /scalattice mcp/);
   assert.match(r.stdout, /scalattice update/);
   assert.match(r.stdout, /scalattice bracket/);
+  assert.match(r.stdout, /scalattice bracket key/);
   assert.doesNotMatch(r.stdout, /scalattice agent\b/);
 });
 
@@ -35,6 +38,8 @@ test('scalattice bracket --help names Bracket', () => {
   assert.match(r.stdout, /\/help \[command\]/);
   assert.match(r.stdout, /\/chats/);
   assert.match(r.stdout, /\/tools/);
+  assert.match(r.stdout, /\/key/);
+  assert.match(r.stdout, /bracket key \[show\|roll\|revoke\]/);
   assert.match(r.stdout, /Tab completes/);
 });
 
@@ -181,6 +186,14 @@ test('backet is a typo alias for bracket --help', () => {
   assert.match(r.stdout, /coding harness/);
 });
 
+test('Bracket, BRACKET, brackets, and BRACKETS are aliases', () => {
+  for (const name of ['Bracket', 'BRACKET', 'brackets', 'BRACKETS', 'Brackets', 'bracket']) {
+    const r = run([name, '--help']);
+    assert.equal(r.status, 0, r.stderr || `${name} failed`);
+    assert.match(r.stdout, /coding harness/, name);
+  }
+});
+
 test('unknown commands still fail', () => {
   const r = run(['definitely-not-a-command']);
   assert.notEqual(r.status, 0);
@@ -223,7 +236,62 @@ test('whoami reports an env inference key even without a Cloud session', () => {
     },
   });
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, /Inference: SCALATTICE_API_KEY set \(…uvwx\)/);
+  assert.match(r.stdout, /Inference: env \(…uvwx\)/);
   assert.match(r.stdout, /scalattice bracket/);
+  assert.match(r.stdout, /scalattice bracket key/);
   assert.doesNotMatch(r.stdout, /slt_abcdefghijklmnopqrstuvwx/);
 });
+
+test('whoami reports bracket.key when env is empty', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slt-whoami-'));
+  fs.writeFileSync(path.join(dir, 'bracket.key'), 'slt_filekeystoredherewxyz\n', { mode: 0o600 });
+  const r = spawnSync(process.execPath, [bin, 'whoami'], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      SCALATTICE_CONFIG_DIR: dir,
+      SCALATTICE_NO_UPDATE: '1',
+      SCALATTICE_SESSION_TOKEN: '',
+      SCALATTICE_MGMT_KEY: '',
+      SCALATTICE_API_KEY: '',
+      OPENAI_API_KEY: '',
+    },
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Inference: bracket\.key \(…wxyz\)/);
+  assert.match(r.stdout, /scalattice bracket key/);
+  assert.doesNotMatch(r.stdout, /slt_filekeystoredherewxyz/);
+});
+
+test('scalattice bracket key shows the file and does not start the TUI', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slt-bkey-cli-'));
+  fs.writeFileSync(path.join(dir, 'bracket.key'), 'slt_abcdefghijklmnopqrstuvwx\n', { mode: 0o600 });
+  const env = {
+    ...process.env,
+    SCALATTICE_CONFIG_DIR: dir,
+    SCALATTICE_NO_UPDATE: '1',
+    SCALATTICE_SESSION_TOKEN: '',
+    SCALATTICE_MGMT_KEY: '',
+    SCALATTICE_API_KEY: '',
+    OPENAI_API_KEY: '',
+  };
+  const shown = spawnSync(process.execPath, [bin, 'bracket', 'key'], { encoding: 'utf8', env });
+  assert.equal(shown.status, 0, shown.stderr);
+  assert.match(shown.stdout, /Source:  bracket\.key/);
+  assert.match(shown.stdout, /…uvwx/);
+  assert.doesNotMatch(shown.stdout, /slt_abcdefghijklmnopqrstuvwx/);
+  assert.doesNotMatch(shown.stdout, /coding harness/);
+
+  const full = spawnSync(process.execPath, [bin, 'bracket', 'key', '--show'], { encoding: 'utf8', env });
+  assert.equal(full.status, 0, full.stderr);
+  assert.match(full.stdout, /Full:    slt_abcdefghijklmnopqrstuvwx/);
+
+  const alias = spawnSync(process.execPath, [bin, 'bracket', 'keys'], { encoding: 'utf8', env });
+  assert.equal(alias.status, 0, alias.stderr);
+  assert.match(alias.stdout, /Source:  bracket\.key/);
+
+  const bad = spawnSync(process.execPath, [bin, 'bracket', 'key', 'nope'], { encoding: 'utf8', env });
+  assert.notEqual(bad.status, 0);
+  assert.match(String(bad.stderr || bad.stdout), /Usage: scalattice bracket key/);
+});
+
