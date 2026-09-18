@@ -219,8 +219,28 @@ test('banner credit lines summarize wallet and matching grant', async () => {
   assert.equal(lines[1], 'Qwen 3 8B unlimited · expires 2026-12-01');
   const text = formatCredits(billing);
   assert.match(text, /Wallet: unlimited \(admin\)/);
-  assert.match(text, /Lifetime spend: \$1\.5000/);
+  assert.match(text, /Lifetime spend: \$1\.50/);
   assert.match(text, /Qwen 3 8B \(unlimited\): unlimited/);
+
+  const fractional = bannerCreditLines(
+    {
+      creditBalanceUsd: 0,
+      lifetimeSpendUsd: 0.0154,
+      modelCredits: [{ displayName: 'All models', grantType: 'balance', balanceUsd: 0.9997 }],
+    },
+    'qwen-3-coder-30b-a3b'
+  );
+  assert.equal(fractional[0], 'Wallet $0.00 · spent $0.0154');
+  assert.equal(fractional[1], 'All models $0.9997');
+  assert.doesNotMatch(fractional.join('\n'), /\$1\.00/);
+  const fracText = formatCredits({
+    creditBalanceUsd: 0,
+    lifetimeSpendUsd: 0.0154,
+    modelCredits: [{ displayName: 'All models', grantType: 'balance', balanceUsd: 0.9997 }],
+  });
+  assert.match(fracText, /Wallet: \$0\.00/);
+  assert.match(fracText, /Lifetime spend: \$0\.0154/);
+  assert.match(fracText, /All models \(balance\): \$0\.9997/);
 });
 
 test('whoami reports an env inference key even without a Cloud session', () => {

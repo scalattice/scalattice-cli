@@ -9,7 +9,10 @@ import { localVersion } from '../update.js';
 function usd(n) {
   const v = Number(n);
   if (!Number.isFinite(v)) return 'n/a';
-  if (v === 0 || Math.abs(v) >= 0.01) return `$${v.toFixed(2)}`;
+  const hundredths = v * 100;
+  if (Math.abs(hundredths - Math.round(hundredths)) < 1e-8) {
+    return `$${(Math.round(hundredths) / 100).toFixed(2)}`;
+  }
   return `$${v.toFixed(4)}`;
 }
 
@@ -73,9 +76,9 @@ export function formatCredits(data) {
     lines.push('Wallet: unlimited (admin)');
   } else {
     const bal = data?.creditBalanceUsd;
-    lines.push(`Wallet: ${bal == null ? 'n/a' : `$${Number(bal).toFixed(4)}`}`);
+    lines.push(`Wallet: ${bal == null ? 'n/a' : usd(bal)}`);
   }
-  lines.push(`Lifetime spend: $${Number(data?.lifetimeSpendUsd || 0).toFixed(4)}`);
+  lines.push(`Lifetime spend: ${usd(data?.lifetimeSpendUsd || 0)}`);
   const grants = data?.modelCredits || [];
   if (!grants.length) {
     lines.push('Model grants: none');
@@ -89,10 +92,10 @@ export function formatCredits(data) {
       grantType === 'unlimited'
         ? 'unlimited'
         : g.balanceUsd != null
-          ? `$${Number(g.balanceUsd).toFixed(4)}`
+          ? usd(g.balanceUsd)
           : g.balance_usd == null
             ? 'n/a'
-            : `$${Number(g.balance_usd).toFixed(4)}`;
+            : usd(g.balance_usd);
     const expRaw = g.expiresAt || g.expires_at;
     const exp = expRaw ? ` · expires ${expRaw}` : '';
     lines.push(`  - ${label} (${grantType}): ${bal}${exp}`);
