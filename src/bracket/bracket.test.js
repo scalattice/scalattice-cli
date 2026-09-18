@@ -83,6 +83,43 @@ test('default settings stream and think with compatible headers', async () => {
   assert.equal(off.security, 'tier2.5');
 });
 
+test('slash help explains one command and settings are labeled', async () => {
+  const { slashHelp, slashIndex, settingsBlock } = await import('./slash.js');
+  const index = slashIndex();
+  assert.match(index, /\/help \[command\]/);
+  assert.match(index, /\/settings/);
+  assert.match(index, /\/region/);
+
+  const stream = slashHelp('stream', { stream: true, thinking: true, region: 'auto', vet: 1, security: 'tier1' });
+  assert.match(stream, /\/stream \[on\|off\]/);
+  assert.match(stream, /Now: on/);
+  assert.match(stream, /vet 1/);
+  assert.match(stream, /tier1/);
+
+  const region = slashHelp('region', { region: 'eu' });
+  assert.match(region, /Now: eu/);
+  assert.match(region, /auto\|us\|eu\|ap/);
+
+  const unknown = slashHelp('nope');
+  assert.match(unknown, /No help for \/nope/);
+  assert.match(unknown, /\/help/);
+
+  const block = settingsBlock({
+    stream: true,
+    thinking: true,
+    region: 'auto',
+    vet: 1,
+    security: 'tier1',
+  });
+  assert.match(block, /Inference settings/);
+  assert.match(block, /Stream\s+on/);
+  assert.match(block, /Thinking\s+on/);
+  assert.match(block, /Region\s+auto/);
+  assert.match(block, /Vet\s+1/);
+  assert.match(block, /Security\s+tier1/);
+  assert.doesNotMatch(block, /stream · think · auto/);
+});
+
 test('thinking tag is applied to the last user turn only', async () => {
   const { applyThinkingTag } = await import('./think.js');
   const msgs = [

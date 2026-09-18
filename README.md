@@ -116,7 +116,7 @@ Login is enough: Bracket mints a **developer inference key** (`slt_…`) named `
 
 Streaming is on by default and sends `X-Scalattice-Vet-Replicas: 1` plus `X-Scalattice-Security: tier1` (required by the API). Thinking is on by default. Toggle with `--no-stream`, `--no-think`, `--region auto|us|eu|ap`, `--vet 1|2|3`, `--security tier1|tier2.5`, or the matching slash commands. Multi-vet or `tier2.5` turns streaming off.
 
-Inside the prompt: type in the boxed input. `/help` `/exit` `/clear` `/compact` `/model` `/yolo` `/credits` `/whoami` `/settings` `/stream` `/think` `/region` `/vet` `/security`. Shell and file writes ask before running unless you pass `--yolo` (also `--auto` / `--dangerously-skip-permissions`).
+Inside the prompt: `/help` lists commands; `/help stream` (or region, vet, settings, …) explains one. `/settings` prints labeled inference options. `/clear` `/compact` `/model` `/yolo` `/credits` `/whoami`. Shell and file writes ask before running unless you pass `--yolo` (also `--auto` / `--dangerously-skip-permissions`).
 
 `--print` is one-shot (CI / scripts) and does not open the TUI. Writes and shell still need `--yolo` when stdin is not a TTY.
 

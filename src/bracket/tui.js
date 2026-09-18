@@ -84,7 +84,7 @@ export function renderBanner({ cwd, model, yolo, version = pkgVersion(), email, 
 
 export function renderIntro(meta = {}) {
   const banner = renderBanner(meta);
-  const hint = `  ${paint(MUTED, 'Ask about this workspace. /help  /exit  /settings  /stream  /think  /credits')}`;
+  const hint = `  ${paint(MUTED, 'Ask about this workspace.  /help [command]   /settings   /exit')}`;
   return `${banner}\n\n${hint}`;
 }
 
@@ -321,7 +321,10 @@ export function createTui() {
       write(`\x1b[${scrollTop};1H\x1b[J`);
     },
     note(s) {
-      write(`  ${paint(MUTED, s)}\n`);
+      write('\n');
+      for (const line of String(s || '').split('\n')) {
+        write(`  ${paint(MUTED, line)}\n`);
+      }
     },
     user(s) {
       write(`\n${paint(CYAN, `${BOLD}you`)}  ${s}\n`);

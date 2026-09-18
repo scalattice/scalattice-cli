@@ -12,6 +12,7 @@ import { loadLastSession, saveSession } from './session.js';
 import { createToolRunner, TOOL_DEFS, toolSummary } from './tools.js';
 import { createTui } from './tui.js';
 import { defaultSettings, parseBoolArg, patchSettings, settingsLine } from './settings.js';
+import { settingNote, settingsBlock, slashHelp } from './slash.js';
 
 export const BRACKET_HELP = `scalattice bracket — coding harness (reads/edits files, runs commands)
 
@@ -50,9 +51,10 @@ Env: SCALATTICE_STREAM, SCALATTICE_THINKING, SCALATTICE_REGION,
      SCALATTICE_VET_REPLICAS, SCALATTICE_SECURITY
 
 Inside Bracket:
-  /help  /exit  /clear  /compact  /model [id]  /yolo [on|off]  /credits  /whoami
-  /settings  /stream [on|off]  /think [on|off]  /region [auto|us|eu|ap]
-  /vet [1|2|3]  /security [tier1|tier2.5]
+  /help [command]     explain one command (try /help stream)
+  /settings           labeled stream / think / region / vet / security
+  /stream /think /region /vet /security /model /yolo /credits /whoami
+  /clear /compact /exit
 
 Auth: sign in (session). Bracket then mints a developer inference key (slt_…).
 Do not use slt_mgmt_… or slt_provider_…. To set a key yourself:
@@ -199,9 +201,7 @@ export async function cmdBracket(opts = {}) {
     const arg = rest.join(' ');
     switch (cmd) {
       case 'help':
-        ui.note(
-          '/help /exit /clear /compact /model /yolo /credits /whoami /settings /stream /think /region /vet /security'
-        );
+        ui.note(slashHelp(arg, { ...settings, model, yolo: permissions.yolo }));
         return 'ok';
       case 'exit':
       case 'quit':
@@ -243,55 +243,87 @@ export async function cmdBracket(opts = {}) {
         await cmdWhoami();
         return 'ok';
       case 'settings':
-        ui.note(settingsLine(settings));
+        ui.note(settingsBlock(settings));
         return 'ok';
       case 'stream':
         try {
           settings = patchSettings(settings, { stream: parseBoolArg(arg, settings.stream) });
           syncHeader();
-          ui.note(settingsLine(settings));
+          ui.note(
+            settingNote(
+              'Stream',
+              settings.stream ? 'on' : 'off',
+              settings.stream
+                ? 'Tokens arrive as they generate. Vet 1 and tier1 are required, so those are set.'
+                : 'Wait for the full completion. You can raise /vet or /security.'
+            ) + `\n\n${settingsBlock(settings)}`
+          );
         } catch (err) {
-          ui.note(err?.message || String(err));
+          ui.note(`${err?.message || String(err)}\n\n${slashHelp('stream', settings)}`);
         }
         return 'ok';
       case 'think':
         try {
           settings = patchSettings(settings, { thinking: parseBoolArg(arg, settings.thinking) });
           syncHeader();
-          ui.note(settingsLine(settings));
+          ui.note(
+            settingNote(
+              'Thinking',
+              settings.thinking ? 'on' : 'off',
+              settings.thinking
+                ? 'The model plans first. That plan shows as a muted think block.'
+                : 'Skip the planning pass when the model honors the toggle.'
+            ) + `\n\n${settingsBlock(settings)}`
+          );
         } catch (err) {
-          ui.note(err?.message || String(err));
+          ui.note(`${err?.message || String(err)}\n\n${slashHelp('think', settings)}`);
         }
         return 'ok';
       case 'region':
         if (!arg) {
-          ui.note(`region ${settings.region} (auto|us|eu|ap)`);
+          ui.note(slashHelp('region', settings));
           return 'ok';
         }
         settings = patchSettings(settings, { region: arg });
         syncHeader();
-        ui.note(settingsLine(settings));
+        ui.note(settingNote('Region', settings.region, 'Where the job may run.') + `\n\n${settingsBlock(settings)}`);
         return 'ok';
       case 'vet':
         if (!arg) {
-          ui.note(`vet ${settings.vet} (1–3; stream needs 1)`);
+          ui.note(slashHelp('vet', settings));
           return 'ok';
         }
         settings = patchSettings(settings, { vet: Number(arg) });
         syncHeader();
-        ui.note(settingsLine(settings));
+        ui.note(
+          settingNote(
+            'Vet',
+            String(settings.vet),
+            settings.stream
+              ? 'Streaming is on, so vet stays 1. /stream off first if you need 2 or 3.'
+              : 'Replica checks before return. 2 or 3 turn streaming off.'
+          ) + `\n\n${settingsBlock(settings)}`
+        );
         return 'ok';
       case 'security':
         if (!arg) {
-          ui.note(`security ${settings.security} (tier1|tier2.5; stream needs tier1)`);
+          ui.note(slashHelp('security', settings));
           return 'ok';
         }
         settings = patchSettings(settings, { security: arg });
         syncHeader();
-        ui.note(settingsLine(settings));
+        ui.note(
+          settingNote(
+            'Security',
+            settings.security,
+            settings.stream
+              ? 'Streaming is on, so security stays tier1. /stream off first for tier2.5.'
+              : 'tier2.5 is stricter and cannot stream.'
+          ) + `\n\n${settingsBlock(settings)}`
+        );
         return 'ok';
       default:
-        ui.note(`Unknown slash command: /${cmd}. Try /help.`);
+        ui.note(`Unknown slash command: /${cmd}. Try /help or /help ${cmd}.`);
         return 'ok';
     }
   };

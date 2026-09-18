@@ -32,6 +32,7 @@ test('scalattice bracket --help names Bracket', () => {
   assert.match(r.stdout, /--stream/);
   assert.match(r.stdout, /--think/);
   assert.match(r.stdout, /--region/);
+  assert.match(r.stdout, /\/help \[command\]/);
   assert.match(r.stdout, /\/settings/);
 });
 
@@ -59,6 +60,7 @@ test('intro stays a fixed block above the transcript', async () => {
   const intro = renderIntro(meta);
   assert.match(intro, /Scalattice Bracket/);
   assert.match(intro, /Ask about this workspace/);
+  assert.match(intro, /\/help \[command\]/);
   assert.equal(introRowCount(meta), intro.split('\n').length);
   assert.ok(introRowCount(meta) >= 6);
 });
