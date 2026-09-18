@@ -90,12 +90,13 @@ export function routingHeaders(settings) {
 
 export function settingsLine(settings) {
   const s = settings || {};
+  const stream = s.stream !== false;
   return [
-    s.stream === false ? 'no-stream' : 'stream',
-    s.thinking === false ? 'no-think' : 'think',
-    regionOf(s.region, 'auto'),
-    `vet ${s.stream === false ? vetOf(s.vet, 1) : 1}`,
-    s.stream === false ? securityOf(s.security, 'tier1') : 'tier1',
+    `stream ${stream ? 'on' : 'off'}`,
+    `think ${s.thinking === false ? 'off' : 'on'}`,
+    `region ${regionOf(s.region, 'auto')}`,
+    `vet ${stream ? 1 : vetOf(s.vet, 1)}`,
+    `security ${stream ? 'tier1' : securityOf(s.security, 'tier1')}`,
   ].join(' · ');
 }
 

@@ -67,7 +67,7 @@ test('default settings stream and think with compatible headers', async () => {
     'X-Scalattice-Vet-Replicas': '1',
     'X-Scalattice-Security': 'tier1',
   });
-  assert.match(settingsLine(s), /stream · think · auto · vet 1 · tier1/);
+  assert.match(settingsLine(s), /stream on · think on · region auto · vet 1 · security tier1/);
 
   const vet2 = defaultSettings({ vet: 2 }, empty);
   assert.equal(vet2.stream, false);

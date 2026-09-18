@@ -44,13 +44,13 @@ test('banner names Scalattice Bracket and can show credits', async () => {
     yolo: false,
     email: 'dev@example.com',
     credits: ['Wallet $12.34 · spent $1.00', 'qwen-3-coder-30b-a3b unlimited'],
-    policy: 'stream · think · auto · vet 1 · tier1',
+    policy: 'stream on · think on · region auto · vet 1 · security tier1',
   });
   assert.match(text, /Scalattice Bracket/);
   assert.match(text, /\/tmp\/ws/);
   assert.match(text, /dev@example.com/);
   assert.match(text, /Wallet \$12\.34/);
-  assert.match(text, /stream · think · auto · vet 1 · tier1/);
+  assert.match(text, /stream on · think on · region auto · vet 1 · security tier1/);
   assert.match(text, /[\u2800-\u28FF]/);
   assert.doesNotMatch(text, /\[ \]\s+Scalattice Bracket/);
   assert.doesNotMatch(text, /coding harness/);

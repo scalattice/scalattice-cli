@@ -18,6 +18,7 @@ const ITALIC = '\x1b[3m';
 const PASTE_ON = '\x1b[?2004h';
 const PASTE_OFF = '\x1b[?2004l';
 const SHOW = '\x1b[?25h';
+const HIDE = '\x1b[?25l';
 const ALT_ON = '\x1b[?1049h';
 const ALT_OFF = '\x1b[?1049l';
 const THINK_GUTTER = '  ┊ ';
@@ -38,7 +39,8 @@ function pkgVersion() {
 }
 
 function width() {
-  return Math.max(40, Math.min(output.columns || 80, 100));
+  const cols = Number(output.columns) || 80;
+  return Math.max(40, Math.min(cols > 1 ? cols - 1 : cols, 100));
 }
 
 function rows() {
@@ -161,11 +163,12 @@ function renderInput(w, value) {
   const shown = value.slice(-innerW);
   const caret = tty() ? paint(CYAN, '█') : '';
   const pad = Math.max(0, innerW - shown.length - (tty() ? 1 : 0));
-  return [
+  const box = [
     hline(w, '╭', '─', '╮'),
     `│ ${paint(CYAN, '>')} ${shown}${caret}${' '.repeat(pad)} │`,
     hline(w, '╰', '─', '╯'),
   ].join('\n');
+  return tty() ? box + HIDE : box;
 }
 
 function eraseLines(n) {
@@ -212,6 +215,7 @@ export function createTui() {
     }
     write('\x1b[2K\r\n');
     write(`\x1b[${scrollTop};${bottom}r`);
+    write(HIDE);
     if (resetCursor) write(`\x1b[${scrollTop};1H`);
     else write('\x1b8');
   }
@@ -299,7 +303,7 @@ export function createTui() {
       }
       input.resume();
       input.setEncoding('utf8');
-      write(ALT_ON + PASTE_ON + SHOW);
+      write(ALT_ON + PASTE_ON + HIDE);
       write('\x1b[2J\x1b[H');
       input.on('data', onData);
       output.on('resize', onResize);
@@ -382,18 +386,18 @@ export function createTui() {
       }
       lineBuf = '';
       const w = width();
-      write(`\n${renderInput(w, '')}`);
+      write(`\n${renderInput(w, '')}${HIDE}`);
       const value = await new Promise((resolve, reject) => {
         waiter = {
           kind: 'line',
           resolve,
           reject,
           redraw() {
-            write(eraseLines(3) + renderInput(w, lineBuf));
+            write(eraseLines(3) + renderInput(w, lineBuf) + HIDE);
           },
         };
       });
-      write(eraseLines(3));
+      write(eraseLines(3) + HIDE);
       return value;
     },
     async approve(toolName, summary) {
