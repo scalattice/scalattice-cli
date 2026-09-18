@@ -203,20 +203,40 @@ test('resolveNpm on unix falls back to npm without a shell', () => {
   }
 });
 
-test('rewritePortableWrappers is a no-op on linux and macos', () => {
+test('rewritePortableWrappers is a no-op for a system Node on unix', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slt-wrap-unix-'));
   try {
-    const nodeHome = path.join(dir, 'runtime', 'node', 'bin');
+    const execPath = path.join(dir, 'usr', 'bin', 'node');
     const cli = path.join(dir, 'lib', 'node_modules', 'scalattice-cli', 'bin', 'scalattice.js');
+    fs.mkdirSync(path.dirname(execPath), { recursive: true });
+    fs.mkdirSync(path.dirname(cli), { recursive: true });
+    fs.writeFileSync(execPath, '');
+    fs.writeFileSync(cli, '');
+    assert.equal(rewritePortableWrappers(dir, { execPath, platform: 'linux' }), false);
+    assert.equal(rewritePortableWrappers(dir, { execPath, platform: 'darwin' }), false);
+    assert.equal(fs.existsSync(path.join(dir, 'bin', 'scalattice')), false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('rewritePortableWrappers writes a unix shim for the private runtime', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slt-wrap-xdg-'));
+  try {
+    const dataHome = path.join(dir, 'share');
+    const nodeHome = path.join(dataHome, 'scalattice', 'runtime', 'node', 'bin');
+    const prefix = path.join(dir, 'prefix');
+    const cli = path.join(prefix, 'lib', 'node_modules', 'scalattice-cli', 'bin', 'scalattice.js');
     fs.mkdirSync(nodeHome, { recursive: true });
     fs.mkdirSync(path.dirname(cli), { recursive: true });
     const execPath = path.join(nodeHome, 'node');
     fs.writeFileSync(execPath, '');
     fs.writeFileSync(cli, '');
-    assert.equal(rewritePortableWrappers(dir, { execPath, platform: 'linux' }), false);
-    assert.equal(rewritePortableWrappers(dir, { execPath, platform: 'darwin' }), false);
-    assert.equal(fs.existsSync(path.join(dir, 'scalattice')), false);
-    assert.equal(fs.existsSync(path.join(dir, 'bin', 'scalattice')), false);
+    assert.equal(rewritePortableWrappers(prefix, { execPath, platform: 'linux', dataHome }), true);
+    const sh = fs.readFileSync(path.join(prefix, 'bin', 'scalattice'), 'utf8');
+    assert.match(sh, /#!/);
+    assert.match(sh, /scalattice\.js/);
+    assert.match(sh, /runtime\/node\/bin/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
