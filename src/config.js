@@ -49,7 +49,6 @@ export function loadConfig() {
     apiUrl: String(process.env.SCALATTICE_API_URL || stored.apiUrl || DEFAULTS.apiUrl).replace(/\/+$/, ''),
     sessionToken: process.env.SCALATTICE_SESSION_TOKEN || stored.sessionToken || '',
     email: stored.email || '',
-    // Keys are never persisted. Env only, for MCP / OpenAI SDK.
     apiKey: process.env.SCALATTICE_API_KEY || process.env.OPENAI_API_KEY || '',
     mgmtKey: process.env.SCALATTICE_MGMT_KEY || '',
   };

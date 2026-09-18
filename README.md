@@ -45,7 +45,7 @@ scalattice> exit
 
 ```bash
 scalattice developers keys create
-eval "$(scalattice init)"   # after OPENAI_API_KEY is in the env
+eval "$(scalattice init)"   # after SCALATTICE_API_KEY is in the env
 ```
 
 One-shot from any shell still works: `scalattice login`, `scalattice whoami`, and the rest.
@@ -78,7 +78,7 @@ Inside the prompt, drop the `scalattice` prefix. From a normal terminal, keep it
 | `login` / `logout` | Session only (what `config.json` stores) |
 | `developers keys list|create|roll|revoke` | Inference API keys (prints secret once; not stored) |
 | `account keys list|create|roll|revoke` | Account management keys (prints secret once; not stored) |
-| `init` | Print OpenAI env exports (needs `OPENAI_API_KEY` in the env) |
+| `init` | Print env exports (`SCALATTICE_API_KEY` plus OpenAI SDK aliases) |
 | `credits` | Wallet + model grants |
 | `whoami` | Show session / account |
 | `provider machines` | List fleet (id, status, token last four) |
@@ -109,7 +109,7 @@ scalattice bracket --print "what does this repo do?"
 scalattice bracket --yolo "apply the refactor"
 ```
 
-Login is enough: Bracket will mint a dedicated inference key named `CLI bracket` and keep it in `~/.config/scalattice/bracket.key`. Or export `OPENAI_API_KEY` / `SCALATTICE_API_KEY`. Default model is `qwen-3-coder-30b-a3b` (override with `--model` or `SCALATTICE_BRACKET_MODEL`).
+Login is enough: Bracket mints a **developer inference key** (`slt_…`) named `CLI bracket` into `~/.config/scalattice/bracket.key`. That is the key type chat completions use. An account management key (`slt_mgmt_…`) cannot call the inference API. To set a key yourself: `export SCALATTICE_API_KEY=slt_…` (`OPENAI_API_KEY` is accepted as an alias). Default model is `qwen-3-coder-30b-a3b` (override with `--model` or `SCALATTICE_BRACKET_MODEL`).
 
 Inside the prompt: type in the boxed input. `/help` `/exit` `/clear` `/compact` `/model` `/yolo` `/credits` `/whoami`. Shell and file writes ask before running unless you pass `--yolo` (also `--auto` / `--dangerously-skip-permissions`).
 

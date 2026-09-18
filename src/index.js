@@ -74,7 +74,7 @@ Quick start:
   1. scalattice login
   2. scalattice credits
   3. scalattice developers keys create   # prints an inference key once
-  4. eval "$(scalattice init)"          # after OPENAI_API_KEY is in the env
+  4. eval "$(scalattice init)"          # after SCALATTICE_API_KEY is in the env
 
 Config file: ${configPath()}
 Env: SCALATTICE_CLOUD_URL, SCALATTICE_API_URL, SCALATTICE_SESSION_TOKEN,

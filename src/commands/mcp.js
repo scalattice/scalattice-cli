@@ -3,7 +3,7 @@
  * Lets Claude Desktop / Cursor call Scalattice tools without a browser.
  *
  * Credits + fleet use the CLI session, or SCALATTICE_MGMT_KEY in the environment.
- * Inference catalog tools use SCALATTICE_API_KEY / OPENAI_API_KEY.
+ * Inference catalog tools use SCALATTICE_API_KEY (OPENAI_API_KEY is an alias).
  */
 import { apiFetch, mgmtFetch } from '../api.js';
 import { loadConfig } from '../config.js';
@@ -108,7 +108,7 @@ async function callTool(name, args = {}) {
           : 'Run `scalattice login` (or set SCALATTICE_MGMT_KEY for MCP).',
         cfg.apiKey
           ? `export OPENAI_BASE_URL=${cfg.apiUrl}`
-          : 'Run `scalattice developers keys create` then export OPENAI_API_KEY.',
+          : 'Run `scalattice developers keys create` then export SCALATTICE_API_KEY.',
       ].join(' '),
     };
   }

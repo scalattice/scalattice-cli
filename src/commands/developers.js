@@ -31,8 +31,9 @@ export async function cmdDevelopersKeysCreate(args) {
   print('Inference API key (shown once, not stored):');
   print(secret);
   print('');
-  print('Add to your shell for the OpenAI SDK:');
-  print(`  export OPENAI_BASE_URL=${cfg.apiUrl}`);
+  print('Add to your shell:');
+  print(`  export SCALATTICE_API_KEY=${secret}`);
+  print(`  export OPENAI_BASE_URL=${cfg.apiUrl}   # OpenAI SDK alias`);
   print(`  export OPENAI_API_KEY=${secret}`);
   return secret;
 }

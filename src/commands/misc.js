@@ -41,12 +41,12 @@ export async function cmdInit() {
   const cfg = loadConfig();
   if (!cfg.apiKey) {
     throw new Error(
-      'No inference API key in the environment. Run: scalattice developers keys create\nThen: export OPENAI_API_KEY=slt_…'
+      'No inference API key in the environment. Run: scalattice developers keys create\nThen: export SCALATTICE_API_KEY=slt_…'
     );
   }
+  print(`export SCALATTICE_API_KEY=${cfg.apiKey}`);
   print(`export OPENAI_BASE_URL=${cfg.apiUrl}`);
   print(`export OPENAI_API_KEY=${cfg.apiKey}`);
-  print('# Optional: SCALATTICE_API_KEY is also accepted by this CLI');
 }
 
 export async function cmdWhoami() {

@@ -40,10 +40,10 @@ Flags:
 Inside Bracket:
   /help  /exit  /clear  /compact  /model [id]  /yolo [on|off]  /credits  /whoami
 
-Auth: a live Cloud session (open /auth and run the curl command), or
-OPENAI_API_KEY / SCALATTICE_API_KEY (must be slt_… inference, not a JWT).
-A Bracket inference key may be stored at ~/.config/scalattice/bracket.key
-(mode 0600). Account session stays in config.json as before.
+Auth: sign in (session). Bracket then mints a developer inference key (slt_…).
+Do not use slt_mgmt_… or slt_provider_…. To set a key yourself:
+  export SCALATTICE_API_KEY=slt_…
+A minted key may be stored at ~/.config/scalattice/bracket.key (mode 0600).
 `;
 
 async function completeTurn({

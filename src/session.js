@@ -12,13 +12,34 @@ export function sessionRefreshHint(cfg) {
   const cloud = cfg?.cloudUrl || 'https://scalattice.cloud';
   return [
     'Cloud session is missing or expired.',
-    `Open ${cloud}/auth in a browser, copy the curl command, and run it in this terminal.`,
-    `That writes a fresh session to ${configPath()}.`,
-    'Then retry Bracket with this checkout, not the old npm install:',
-    '  node ./bin/scalattice.js bracket',
-    'Or skip the session and use an inference key from Cloud → Developers:',
-    '  export OPENAI_API_KEY=slt_…',
+    `Open ${cloud}/auth, copy the curl command, and run it in this terminal.`,
+    `That writes a session to ${configPath()}. Then try again.`,
   ].join('\n');
+}
+
+export function bracketAuthHint(cfg) {
+  return [
+    sessionRefreshHint(cfg),
+    '',
+    'Bracket calls the inference API, so it needs a developer key (slt_…).',
+    'Not an account management key (slt_mgmt_…) and not a provider token (slt_provider_…).',
+    'A live session is enough — Bracket mints the developer key.',
+    'To set one yourself:  export SCALATTICE_API_KEY=slt_…',
+  ].join('\n');
+}
+
+export function wrongKeyHint(value) {
+  const s = String(value || '').trim();
+  if (s.startsWith('slt_mgmt_')) {
+    return 'That is an account management key (slt_mgmt_…). Bracket needs a developer inference key (slt_…).';
+  }
+  if (s.startsWith('slt_provider_')) {
+    return 'That is a provider machine token (slt_provider_…). Bracket needs a developer inference key (slt_…).';
+  }
+  if (s && !looksLikeInferenceKey(s)) {
+    return 'SCALATTICE_API_KEY is not a developer inference key (slt_…).';
+  }
+  return '';
 }
 
 export async function probeSession(cfg) {
