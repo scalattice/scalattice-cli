@@ -29,9 +29,15 @@ export function createPermissions({ yolo = false, interactive = true, ask } = {}
         );
       }
       if (typeof ask === 'function') {
-        const answer = String((await ask(toolName, summary)) || '')
-          .trim()
-          .toLowerCase();
+        let answer;
+        try {
+          answer = String((await ask(toolName, summary)) || '')
+            .trim()
+            .toLowerCase();
+        } catch (err) {
+          if (err?.interrupted) throw err;
+          throw err;
+        }
         if (answer === 'a' || answer === 'always') {
           always.add(toolName);
           return true;

@@ -11,6 +11,38 @@ export function inferenceUrl(apiUrl, path) {
   return `${base}/${suffix}`;
 }
 
+const CF_EDGE = {
+  520: 'Cloudflare 520: origin returned an unknown error.',
+  521: 'Cloudflare 521: inference origin is down.',
+  522: 'Cloudflare 522: could not connect to origin.',
+  523: 'Cloudflare 523: origin is unreachable.',
+  524: 'Cloudflare 524: origin timed out before the first token (long prompt or a slow GPU). Try a shorter request.',
+};
+
+export function looksLikeHtmlError(body) {
+  const raw = String(body || '');
+  return /<!DOCTYPE html/i.test(raw) || /<html[\s>]/i.test(raw) || /cf-error/i.test(raw);
+}
+
+/** Never dump Cloudflare/HTML error pages into the TUI. */
+export function describeHttpError(status, url, body) {
+  const n = Number(status) || 0;
+  const raw = String(body || '');
+  const html = looksLikeHtmlError(raw);
+  let detail = '';
+  if (!html) {
+    try {
+      const j = JSON.parse(raw);
+      detail = String(j.error?.message || j.message || '').trim();
+    } catch {
+      detail = raw.replace(/\s+/g, ' ').trim().slice(0, 240);
+    }
+  }
+  const edge = CF_EDGE[n] || (html ? `HTTP ${n}: gateway returned an HTML error page.` : '');
+  const msg = [edge, detail].filter(Boolean).join(' ') || `HTTP ${n}`;
+  return `API ${n} ${url}: ${msg}`;
+}
+
 function openaiMessages(messages) {
   return (messages || []).map((m) => {
     if (!m || typeof m !== 'object') return m;
@@ -132,49 +164,53 @@ async function readSse(res, { onDelta, signal } = {}) {
     if (choice.finish_reason) finishReason = choice.finish_reason;
   };
 
-  while (true) {
-    if (signal?.aborted) {
-      try {
-        await reader.cancel();
-      } catch {
-        /* ignore */
+  const onAbort = () => {
+    reader.cancel().catch(() => {});
+  };
+  signal?.addEventListener?.('abort', onAbort, { once: true });
+
+  try {
+    while (true) {
+      if (signal?.aborted) {
+        throw new Error('aborted');
       }
-      throw new Error('aborted');
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const parts = buf.split('\n');
+      buf = parts.pop() || '';
+      for (const raw of parts) {
+        const line = raw.replace(/\r$/, '');
+        if (line.startsWith('data:')) consumeData(line.slice(5));
+        else if (line.startsWith('{')) consumeData(line);
+      }
     }
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += dec.decode(value, { stream: true });
-    const parts = buf.split('\n');
-    buf = parts.pop() || '';
-    for (const raw of parts) {
-      const line = raw.replace(/\r$/, '');
-      if (line.startsWith('data:')) consumeData(line.slice(5));
-      else if (line.startsWith('{')) consumeData(line);
-    }
-  }
-  const tail = buf.trim();
-  if (tail.startsWith('data:')) consumeData(tail.slice(5));
-  else if (tail.startsWith('{')) consumeData(tail);
-  takeParts(splitter.flush());
-
-  if (!sawContentDelta && !sawReasoningDelta && lastMessage) {
-    if (lastMessage.reasoning_content || lastMessage.reasoning) {
-      takeParts(splitter.pushThinking(lastMessage.reasoning_content || lastMessage.reasoning));
-    }
-    if (lastMessage.content) takeParts(splitter.push(lastMessage.content));
+    const tail = buf.trim();
+    if (tail.startsWith('data:')) consumeData(tail.slice(5));
+    else if (tail.startsWith('{')) consumeData(tail);
     takeParts(splitter.flush());
-  }
-  if (lastMessage?.tool_calls?.length) ingestToolCalls(toolAcc, lastMessage.tool_calls);
 
-  const tool_calls = [...toolAcc.values()].filter((t) => t.function.name);
-  if (!content && !tool_calls.length && !reasoning && !sawDone) {
-    throw new Error('empty stream');
+    if (!sawContentDelta && !sawReasoningDelta && lastMessage) {
+      if (lastMessage.reasoning_content || lastMessage.reasoning) {
+        takeParts(splitter.pushThinking(lastMessage.reasoning_content || lastMessage.reasoning));
+      }
+      if (lastMessage.content) takeParts(splitter.push(lastMessage.content));
+      takeParts(splitter.flush());
+    }
+    if (lastMessage?.tool_calls?.length) ingestToolCalls(toolAcc, lastMessage.tool_calls);
+
+    const tool_calls = [...toolAcc.values()].filter((t) => t.function.name);
+    if (!content && !tool_calls.length && !reasoning && !sawDone) {
+      throw new Error('empty stream');
+    }
+    const msg = { role: 'assistant', content: content || null };
+    if (tool_calls.length) msg.tool_calls = tool_calls;
+    if (reasoning) msg.reasoning_content = reasoning;
+    if (finishReason) msg.finish_reason = finishReason;
+    return msg;
+  } finally {
+    signal?.removeEventListener?.('abort', onAbort);
   }
-  const msg = { role: 'assistant', content: content || null };
-  if (tool_calls.length) msg.tool_calls = tool_calls;
-  if (reasoning) msg.reasoning_content = reasoning;
-  if (finishReason) msg.finish_reason = finishReason;
-  return msg;
 }
 
 export async function chatCompletion({
@@ -187,7 +223,7 @@ export async function chatCompletion({
   thinking = true,
   settings,
   temperature = 0.2,
-  max_tokens = 1024,
+  max_tokens = 2048,
   signal,
   onDelta,
 } = {}) {
@@ -220,14 +256,7 @@ export async function chatCompletion({
   });
   if (!res.ok) {
     const t = await res.text().catch(() => '');
-    let msg = t.slice(0, 800);
-    try {
-      const j = JSON.parse(t);
-      msg = j.error?.message || j.message || msg;
-    } catch {
-      /* keep */
-    }
-    throw new Error(`API ${res.status} ${url}: ${msg}`);
+    throw new Error(describeHttpError(res.status, url, t));
   }
   if (useStream && res.body) {
     return readSse(res, { onDelta, signal });
@@ -266,7 +295,11 @@ export async function listModels({ apiUrl, apiKey } = {}) {
   const res = await fetch(inferenceUrl(apiUrl, '/models'), {
     headers: { Authorization: `Bearer ${apiKey}` },
   });
-  if (!res.ok) throw new Error(`models ${res.status}`);
+  if (!res.ok) {
+    const err = new Error(`models ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
   const json = await res.json();
   return (json.data || [])
     .filter((m) => m && m.id)

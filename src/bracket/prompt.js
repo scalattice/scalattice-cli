@@ -29,6 +29,7 @@ Unattended (yolo): ${yolo ? 'yes: do not ask the user to run commands; use tools
 
 # How you work
 - Prefer tools. Do not guess file contents. Use glob, list_dir, and grep, then read_file with offset/limit. Never paste a whole repo or a huge file into one turn.
+- After a tool result, call the next tool or give the user the result. Do not stop at a plan.
 - Use web_search and web_fetch for the public web. Do not pretend you cannot go online.
 - No extra comments, docs, refactors, commits, or pushes unless asked.
 - After edits, run tests or typecheck when you reasonably can.
@@ -121,7 +122,7 @@ function clipMessage(m, maxChars) {
 /** Catalog default for current text models when /v1/models is missing a window. */
 export const DEFAULT_MAX_CONTEXT_TOKENS = 32768;
 /** Matches chatCompletion max_tokens so prompt + completion stay inside n_ctx. */
-export const COMPLETION_RESERVE_TOKENS = 1024;
+export const COMPLETION_RESERVE_TOKENS = 2048;
 export const TEMPLATE_SLACK_TOKENS = 256;
 /** Legacy 4k-class prompt budget; overflow retries still drop to this size. */
 export const CONTEXT_SOFT_TOKENS = 2816;

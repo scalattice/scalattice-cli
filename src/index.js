@@ -27,6 +27,7 @@ import {
 import { runMcpServer } from './commands/mcp.js';
 import { cmdBracket, BRACKET_HELP } from './bracket/index.js';
 import { cmdBracketKey } from './bracket/key.js';
+import { cmdBracketProvider } from './bracket/providers.js';
 import { cmdUpdate, maybeAutoUpdate } from './update.js';
 import { print, setPromptInterface } from './io.js';
 import { configPath, loadConfig } from './config.js';
@@ -53,7 +54,8 @@ Bracket:
   scalattice bracket
   scalattice bracket "fix the failing tests"
   scalattice bracket --help
-  scalattice bracket key [show|roll|revoke] [--show]
+  scalattice bracket provider [list|add|use|remove]
+  scalattice bracket provider key [show|set|new|roll|revoke] [--show]
 
 Developers (inference API keys slt_…):
   scalattice developers keys list|create|roll|revoke
@@ -99,7 +101,8 @@ const SHELL_HELP = `Commands:
   logout
   credits
   bracket ["prompt"]
-  bracket key [show|roll|revoke]
+  bracket provider [list|add|use|remove]
+  bracket provider key [show|set|new|roll|revoke]
   developers keys list|create|roll|revoke
   account keys list|create|roll|revoke
   init
@@ -206,6 +209,8 @@ function parseArgs(argv) {
     else if (a === '--security') flags.security = argv[++i];
     else if (a === '--no-update') flags.noUpdate = true;
     else if (a === '--check') flags.check = true;
+    else if (a === '--url') flags.url = argv[++i];
+    else if (a === '--key') flags.key = argv[++i];
     else if (a === '--show') flags.show = true;
     else if (a.startsWith('-')) throw new Error(`Unknown flag: ${a}`);
     else positionals.push(a);
@@ -409,6 +414,10 @@ async function dispatch(argv, { shell = false, rl } = {}) {
       }
       if (asKeys(sub) === 'keys') {
         await cmdBracketKey(rest, flags);
+        break;
+      }
+      if (sub === 'provider' || sub === 'providers') {
+        await cmdBracketProvider(rest, flags);
         break;
       }
       const prompt = [sub, ...rest].filter(Boolean).join(' ');

@@ -171,9 +171,30 @@ function timeoutSignal(ms) {
   return ac.signal;
 }
 
-async function fetchFollow(url, { fetchImpl, method = 'GET', body, headers, skipPublicDns = false } = {}) {
+function combineSignals(outer, inner) {
+  if (!outer) return inner;
+  if (!inner) return outer;
+  if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.any === 'function') {
+    return AbortSignal.any([outer, inner]);
+  }
+  const ac = new AbortController();
+  const onAbort = () => ac.abort();
+  if (outer.aborted || inner.aborted) {
+    ac.abort();
+    return ac.signal;
+  }
+  outer.addEventListener?.('abort', onAbort, { once: true });
+  inner.addEventListener?.('abort', onAbort, { once: true });
+  return ac.signal;
+}
+
+async function fetchFollow(url, { fetchImpl, method = 'GET', body, headers, skipPublicDns = false, signal } = {}) {
   let current = url;
   for (let i = 0; i <= MAX_REDIRECTS; i += 1) {
+    if (signal?.aborted) {
+      const err = Object.assign(new Error('Interrupted'), { interrupted: true });
+      throw err;
+    }
     if (skipPublicDns) assertHttpUrl(current);
     else await assertPublicHttpUrl(current);
     const res = await fetchImpl(current, {
@@ -181,7 +202,7 @@ async function fetchFollow(url, { fetchImpl, method = 'GET', body, headers, skip
       body,
       headers,
       redirect: 'manual',
-      signal: timeoutSignal(FETCH_MS),
+      signal: combineSignals(signal, timeoutSignal(FETCH_MS)),
     });
     if (res.status >= 300 && res.status < 400) {
       const loc = res.headers.get('location');
@@ -196,12 +217,13 @@ async function fetchFollow(url, { fetchImpl, method = 'GET', body, headers, skip
   throw new Error('Too many redirects');
 }
 
-export async function webFetchTool(args = {}, { fetchImpl = globalThis.fetch, skipPublicDns = false } = {}) {
+export async function webFetchTool(args = {}, { fetchImpl = globalThis.fetch, skipPublicDns = false, signal } = {}) {
   const raw = String(args.url || args.uri || '').trim();
   if (!raw) throw new Error('url is required');
   const { res, finalUrl } = await fetchFollow(raw, {
     fetchImpl,
     skipPublicDns,
+    signal,
     headers: { Accept: 'text/html, text/plain, application/json, */*', 'User-Agent': UA },
   });
   if (!res.ok) throw new Error(`HTTP ${res.status} for ${finalUrl}`);
@@ -211,13 +233,14 @@ export async function webFetchTool(args = {}, { fetchImpl = globalThis.fetch, sk
   return clip(`URL: ${finalUrl}\n\n${text || '(empty)'}`);
 }
 
-export async function webSearchTool(args = {}, { fetchImpl = globalThis.fetch, skipPublicDns = false } = {}) {
+export async function webSearchTool(args = {}, { fetchImpl = globalThis.fetch, skipPublicDns = false, signal } = {}) {
   const query = String(args.query || args.q || '').trim();
   if (!query) throw new Error('query is required');
   const target = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
   const { res, finalUrl } = await fetchFollow(target, {
     fetchImpl,
     skipPublicDns,
+    signal,
     headers: {
       Accept: 'text/html',
       'User-Agent': UA,

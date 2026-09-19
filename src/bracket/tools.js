@@ -149,19 +149,83 @@ function parseArgs(raw) {
   }
 }
 
-function runBash({ command, timeout_ms }, cwd) {
+export function interruptedError(message = 'Interrupted') {
+  return Object.assign(new Error(message), { interrupted: true });
+}
+
+function stopChild(child) {
+  if (!child?.pid || child.exitCode != null) return;
+  try {
+    if (process.platform === 'win32') {
+      spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], {
+        stdio: 'ignore',
+        windowsHide: true,
+      });
+    } else {
+      try {
+        process.kill(-child.pid, 'SIGKILL');
+      } catch {
+        child.kill('SIGKILL');
+      }
+    }
+  } catch {
+    try {
+      child.kill('SIGKILL');
+    } catch {
+      /* already gone */
+    }
+  }
+}
+
+function runBash({ command, timeout_ms }, cwd, signal) {
   const timeout = Math.min(Math.max(Number(timeout_ms) || 120_000, 1000), 300_000);
   const isWin = process.platform === 'win32';
-  const child = isWin
-    ? spawn('cmd.exe', ['/d', '/s', '/c', command], { cwd, env: process.env })
-    : spawn('/bin/bash', ['-lc', command], { cwd, env: process.env });
+  if (signal?.aborted) {
+    return Promise.reject(interruptedError());
+  }
 
-  return new Promise((resolve) => {
+  const child = isWin
+    ? spawn('cmd.exe', ['/d', '/s', '/c', command], {
+        cwd,
+        env: process.env,
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+    : spawn('/bin/bash', ['-c', command], {
+        cwd,
+        env: process.env,
+        detached: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+
+  return new Promise((resolve, reject) => {
     let stdout = '';
     let stderr = '';
+    let settled = false;
+
+    const finish = (fn) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener?.('abort', onAbort);
+      fn();
+    };
+
+    const onAbort = () => {
+      stopChild(child);
+      finish(() => reject(interruptedError()));
+    };
+
     const timer = setTimeout(() => {
-      child.kill('SIGKILL');
+      stopChild(child);
     }, timeout);
+
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
+    signal?.addEventListener?.('abort', onAbort, { once: true });
+
     child.stdout?.on('data', (d) => {
       stdout += d.toString('utf8');
       if (stdout.length > MAX_TOOL_CHARS * 2) stdout = stdout.slice(-MAX_TOOL_CHARS);
@@ -170,23 +234,23 @@ function runBash({ command, timeout_ms }, cwd) {
       stderr += d.toString('utf8');
       if (stderr.length > MAX_TOOL_CHARS) stderr = stderr.slice(-MAX_TOOL_CHARS);
     });
-    child.on('close', (code, signal) => {
-      clearTimeout(timer);
-      resolve(
-        clip(
-          [
-            `exit ${code}${signal ? ` signal=${signal}` : ''}`,
-            stdout ? `stdout:\n${stdout}` : 'stdout: (empty)',
-            stderr ? `stderr:\n${stderr}` : '',
-          ]
-            .filter(Boolean)
-            .join('\n')
+    child.on('close', (code, sig) => {
+      finish(() =>
+        resolve(
+          clip(
+            [
+              `exit ${code}${sig ? ` signal=${sig}` : ''}`,
+              stdout ? `stdout:\n${stdout}` : 'stdout: (empty)',
+              stderr ? `stderr:\n${stderr}` : '',
+            ]
+              .filter(Boolean)
+              .join('\n')
+          )
         )
       );
     });
     child.on('error', (err) => {
-      clearTimeout(timer);
-      resolve(`failed to spawn shell: ${err.message}`);
+      finish(() => resolve(`failed to spawn shell: ${err.message}`));
     });
   });
 }
@@ -288,7 +352,7 @@ function listDirTool(args, cwd) {
   return lines.length ? lines.join('\n') : '(empty)';
 }
 
-export function createToolRunner({ cwd, permissions, todos }) {
+export function createToolRunner({ cwd, permissions, todos, signal } = {}) {
   return async function runTool(call) {
     const name = call.function?.name || call.name;
     const args = parseArgs(call.function?.arguments ?? call.arguments);
@@ -300,14 +364,16 @@ export function createToolRunner({ cwd, permissions, todos }) {
           : JSON.stringify(args).slice(0, 180);
 
     try {
+      if (signal?.aborted) throw interruptedError();
       const ok = await permissions.approve(name, summary);
+      if (signal?.aborted) throw interruptedError();
       if (!ok) return `Denied by user: ${name}`;
 
       let out;
       switch (name) {
         case 'bash':
           if (!args.command) throw new Error('command is required');
-          out = await runBash(args, cwd);
+          out = await runBash(args, cwd, signal);
           break;
         case 'read_file':
           out = readFileTool(args, cwd);
@@ -337,17 +403,18 @@ export function createToolRunner({ cwd, permissions, todos }) {
         }
         case 'web_search':
           if (!args.query) throw new Error('query is required');
-          out = await webSearchTool(args);
+          out = await webSearchTool(args, { signal });
           break;
         case 'web_fetch':
           if (!args.url) throw new Error('url is required');
-          out = await webFetchTool(args);
+          out = await webFetchTool(args, { signal });
           break;
         default:
           out = `Unknown tool: ${name}`;
       }
       return clip(out);
     } catch (err) {
+      if (err?.interrupted || signal?.aborted) throw interruptedError(err?.message);
       return `Error: ${err?.message || String(err)}`;
     }
   };
@@ -369,6 +436,7 @@ export function toolsPrompt() {
   return [
     'You have OpenAI function tools on this request (including web_search and web_fetch). Call them with tool_calls (function name + JSON arguments). Do not print a tutorial about the tools.',
     'Prefer tools over guessing. Use glob/list_dir/grep, then read_file in slices. Use web_search and web_fetch for live pages.',
+    'After a tool result, either call the next tool or answer with the result. Never stop at "I will now…" or "let me create…".',
     'If a template cannot emit native tool_calls, a <tool_call>{"name":"TOOL_NAME","arguments":{}}</tool_call> block is also accepted.',
     listed.length ? `Tools: ${listed.map((row) => row.split(':')[0]).join(', ')}.` : '',
   ]

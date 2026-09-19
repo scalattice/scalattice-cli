@@ -5,13 +5,31 @@ import { print } from '../io.js';
 import { loadBilling, bannerCreditLines, creditsText, whoamiText } from '../commands/misc.js';
 import { resolveBracketAuth } from './auth.js';
 import {
+  createBracketKey,
   describeBracketKey,
   formatBracketKeyStatus,
   formatRevokeResult,
   formatRollResult,
+  formatSetResult,
   revokeBracketKey,
   rollBracketKey,
 } from './key.js';
+import {
+  addProvider,
+  findProvider,
+  formatProviderList,
+  formatProviderSwitch,
+  getActiveProvider,
+  isScalatticeProvider,
+  listProviders,
+  looksLikeProviderSecret,
+  patchProvider,
+  providerKey,
+  removeProvider,
+  setActiveProviderKey,
+  setActiveProviderModel,
+  useProvider,
+} from './providers.js';
 import { listModels } from './client.js';
 import { runLoop } from './loop.js';
 import { createPermissions } from './permissions.js';
@@ -31,7 +49,8 @@ Usage:
   scalattice bracket --print "summarize this repo"
   scalattice bracket --yolo "apply the refactor"
   scalattice bracket --continue
-  scalattice bracket key [show|roll|revoke] [--show]
+  scalattice bracket provider [list|add|use|remove]
+  scalattice bracket provider key [show|set|new|roll|revoke] [--show]
 
 Flags:
   --yolo, --auto, --dangerously-skip-permissions
@@ -63,17 +82,18 @@ Env: SCALATTICE_STREAM, SCALATTICE_THINKING, SCALATTICE_REGION,
 Inside Bracket:
   /help [command]     explain one command (try /help stream)
   /settings           labeled stream / think / region / vet / security
-  /stream /think /region /vet /security /model /yolo /credits /whoami /key
+  /stream /think /region /vet /security /model /yolo /credits /whoami /provider
   /chats /chat /new /rename /forget /clear /compact /exit
   /tools
   Tab completes commands, flags, models, and chats.
 
 Auth: sign in (session). Bracket then mints a developer inference key (slt_…).
 Do not use slt_mgmt_… or slt_provider_…. To set a key yourself:
-  export SCALATTICE_API_KEY=slt_…
+  /provider key set slt_…
 A minted key is stored at ~/.config/scalattice/bracket.key (mode 0600).
-Manage it with scalattice bracket key or /key inside Bracket (roll / revoke).
-scalattice bracket key --show prints the full secret. /key never does.
+Manage keys on the active provider: /provider key set | new | roll | revoke.
+Custom OpenAI-compatible endpoints: /provider add NAME URL
+scalattice bracket provider key --show prints the full secret. /provider key never does.
 `;
 
 function deltaPart(part) {
@@ -97,7 +117,7 @@ async function completeTurn({
   const signal = outerSignal || ac.signal;
   const onSig = () => ac.abort();
   if (!ui) process.once('SIGINT', onSig);
-  const runTool = createToolRunner({ cwd, permissions, todos });
+  const runTool = createToolRunner({ cwd, permissions, todos, signal });
   const stream = settings?.stream !== false;
   try {
     const result = await runLoop({
@@ -121,6 +141,13 @@ async function completeTurn({
       onTool: ({ summary }) => {
         if (ui) ui.tool(summary);
         else print(`▸ ${summary}`);
+      },
+      onToolDone: ({ result }) => {
+        if (ui) ui.toolResult?.(result);
+        else if (result) {
+          const line = String(result).split('\n')[0];
+          print(`  ${line.slice(0, 180)}`);
+        }
       },
       onAssistantEnd: (assistant) => {
         if (ui) {
@@ -172,15 +199,21 @@ export async function cmdBracket(opts = {}) {
   }
 
   const auth = await resolveBracketAuth();
+  if (auth.authNote) print(auth.authNote);
+  settings = patchSettings(settings, { providerId: auth.providerId || 'scalattice' });
   let catalog = [];
   try {
     catalog = await listModels({ apiUrl: auth.apiUrl, apiKey: auth.apiKey });
   } catch {
     /* catalog optional */
   }
-  const modelIds = catalog.map((m) => m.id);
-  let model = flags.model || pickDefaultModel(modelIds, loadLastBracketModel());
-  if (model) saveLastBracketModel(model);
+  let modelIds = catalog.map((m) => m.id);
+  let model =
+    flags.model || pickDefaultModel(modelIds, getActiveProvider().model || loadLastBracketModel());
+  if (model) {
+    saveLastBracketModel(model);
+    setActiveProviderModel(model);
+  }
 
   const todos = [];
   let messages;
@@ -198,6 +231,7 @@ export async function cmdBracket(opts = {}) {
     if (prev.model && !flags.model) {
       model = prev.model;
       saveLastBracketModel(model);
+      setActiveProviderModel(model);
     }
   } else {
     chatId = newChatId();
@@ -231,6 +265,7 @@ export async function cmdBracket(opts = {}) {
     complete: (line) =>
       completeSlash(line, {
         models: modelIds,
+        providers: listProviders().map((p) => p.id),
         chats: listSessions({ cwd, limit: 80 }),
         cwd,
       }),
@@ -255,11 +290,13 @@ export async function cmdBracket(opts = {}) {
     chatTitle = saved.title;
     chatCreatedAt = saved.createdAt;
     saveLastBracketModel(model);
+    setActiveProviderModel(model);
     syncHeader();
   };
   let billing = null;
   const headerBits = () => ({
     model,
+    provider: auth.providerName || getActiveProvider().name,
     yolo: permissions.yolo,
     policy: settingsLine(settings),
     credits: bannerCreditLines(billing, model),
@@ -393,6 +430,7 @@ export async function cmdBracket(opts = {}) {
         if (arg) {
           model = arg;
           saveLastBracketModel(model);
+          setActiveProviderModel(model);
           syncHeader();
           ui.note(`Model set to ${model}`);
           return 'save';
@@ -427,29 +465,134 @@ export async function cmdBracket(opts = {}) {
           ui.error(err?.message || String(err));
         }
         return 'ok';
-      case 'key': {
-        const sub = String(rest[0] || 'show').toLowerCase();
+      case 'key':
+      case 'provider': {
+        const fromKey = cmd === 'key';
+        const words = fromKey ? ['key', ...rest] : rest;
+        const sub = String(words[0] || 'list').toLowerCase();
         try {
-          if (!sub || sub === 'show' || sub === 'status') {
-            const { info, cloud } = await describeBracketKey(auth, { sessionSecret: auth.apiKey });
-            ui.note(formatBracketKeyStatus(info, { cloud, sessionSecret: auth.apiKey }));
+          if (!sub || sub === 'list' || sub === 'ls' || sub === 'show') {
+            ui.note(formatProviderList());
             return 'ok';
           }
-          if (sub === 'roll') {
-            const result = await rollBracketKey(auth, { sessionSecret: auth.apiKey });
-            auth.apiKey = result.secret;
-            auth.keySource = result.envWins ? 'env' : 'bracket.key';
-            ui.note(formatRollResult(result));
+          if (sub === 'add') {
+            const rec = addProvider({
+              name: words[1],
+              url: words[2],
+            });
+            ui.note(
+              `Added ${rec.name} (${rec.id})\n${formatProviderSwitch(rec)}\n/provider use ${rec.id}\nThen: /provider key set SECRET`
+            );
             return 'ok';
           }
-          if (sub === 'revoke') {
-            const result = await revokeBracketKey(auth, { sessionSecret: auth.apiKey });
-            auth.apiKey = '';
-            auth.keySource = '';
-            ui.note(formatRevokeResult(result));
+          if (sub === 'key' || sub === 'keys') {
+            const action = String(words[1] || 'show').toLowerCase();
+            const known = ['show', 'status', 'set', 'new', 'create', 'roll', 'revoke'];
+            const secretArg = known.includes(action)
+              ? words.slice(2).join(' ').trim()
+              : words.slice(1).join(' ').trim();
+            const verb = known.includes(action)
+              ? action
+              : looksLikeProviderSecret(secretArg)
+                ? 'set'
+                : '';
+            if (!verb || verb === 'show' || verb === 'status') {
+              if (action && !known.includes(action) && !verb) {
+                ui.note(slashHelp('provider'));
+                return 'ok';
+              }
+              const { info, cloud } = await describeBracketKey(auth, { sessionSecret: auth.apiKey });
+              ui.note(formatBracketKeyStatus(info, { cloud, sessionSecret: auth.apiKey }));
+              return 'ok';
+            }
+            if (verb === 'set') {
+              if (!secretArg) {
+                ui.note(slashHelp('provider'));
+                return 'ok';
+              }
+              const rec = setActiveProviderKey(secretArg);
+              auth.apiKey = secretArg;
+              auth.keySource = isScalatticeProvider(rec) ? 'bracket.key' : 'provider';
+              ui.note(formatSetResult(rec, secretArg));
+              return 'ok';
+            }
+            if (verb === 'new' || verb === 'create') {
+              const result = await createBracketKey(auth);
+              auth.apiKey = result.secret;
+              auth.keySource = result.envWins ? 'env' : 'bracket.key';
+              ui.note(formatRollResult(result));
+              return 'ok';
+            }
+            if (verb === 'roll') {
+              const result = await rollBracketKey(auth, { sessionSecret: auth.apiKey });
+              auth.apiKey = result.secret;
+              auth.keySource = result.envWins ? 'env' : 'bracket.key';
+              ui.note(formatRollResult(result));
+              return 'ok';
+            }
+            if (verb === 'revoke') {
+              const result = await revokeBracketKey(auth, { sessionSecret: auth.apiKey });
+              auth.apiKey = isScalatticeProvider(getActiveProvider()) ? '' : providerKey();
+              auth.keySource = '';
+              ui.note(formatRevokeResult(result));
+              return 'ok';
+            }
+            ui.note(slashHelp('provider'));
             return 'ok';
           }
-          ui.note(slashHelp('key'));
+          if (sub === 'use' || sub === 'switch' || findProvider(sub)) {
+            const ref = sub === 'use' || sub === 'switch' ? rest[1] : sub;
+            if (!ref) {
+              ui.note(formatProviderList());
+              return 'ok';
+            }
+            const rec = useProvider(ref);
+            auth.apiUrl = rec.apiUrl;
+            auth.apiKey = providerKey(rec, auth);
+            auth.providerId = rec.id;
+            auth.providerName = rec.name;
+            auth.keySource = isScalatticeProvider(rec) ? auth.keySource : 'provider';
+            settings = patchSettings(settings, { providerId: rec.id });
+            catalog = [];
+            try {
+              if (auth.apiKey) catalog = await listModels({ apiUrl: auth.apiUrl, apiKey: auth.apiKey });
+            } catch {
+              /* catalog optional */
+            }
+            modelIds = catalog.map((m) => m.id);
+            model = pickDefaultModel(modelIds, rec.model || loadLastBracketModel());
+            if (model) {
+              saveLastBracketModel(model);
+              setActiveProviderModel(model);
+            }
+            syncHeader();
+            ui.note(
+              `${formatProviderSwitch(rec)}\nModel:    ${model || '(none)'}${
+                auth.apiKey ? '' : '\nNo key. /provider key set SECRET'
+              }`
+            );
+            return 'save';
+          }
+          if (sub === 'url') {
+            if (!words[1]) {
+              ui.note(slashHelp('provider'));
+              return 'ok';
+            }
+            const rec = patchProvider(getActiveProvider().id, { url: words[1] });
+            auth.apiUrl = rec.apiUrl;
+            ui.note(formatProviderSwitch(rec));
+            return 'ok';
+          }
+          if (sub === 'rm' || sub === 'remove' || sub === 'delete') {
+            if (!words[1]) {
+              ui.note(slashHelp('provider'));
+              return 'ok';
+            }
+            const rec = removeProvider(words[1]);
+            ui.note(`Removed ${rec.name} (${rec.id})`);
+            return 'ok';
+          }
+          ui.note(slashHelp('provider'));
         } catch (err) {
           ui.error(err?.message || String(err));
         }
@@ -585,6 +728,18 @@ export async function cmdBracket(opts = {}) {
 
   ui.enter();
   let quitCli = false;
+  const die = (code) => {
+    try {
+      ui.leave();
+    } catch {
+      /* ignore */
+    }
+    process.exit(code);
+  };
+  const onSigint = () => die(130);
+  const onSigterm = () => die(143);
+  process.on('SIGINT', onSigint);
+  process.on('SIGTERM', onSigterm);
   try {
     billing = await loadBilling(auth);
     ui.banner({
@@ -638,6 +793,8 @@ export async function cmdBracket(opts = {}) {
       if (!ok) restore = line;
     }
   } finally {
+    process.removeListener('SIGINT', onSigint);
+    process.removeListener('SIGTERM', onSigterm);
     persist();
     ui.leave();
   }

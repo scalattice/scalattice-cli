@@ -3,7 +3,7 @@ const ALIAS = {
   thinking: 'think',
   models: 'model',
   setting: 'settings',
-  keys: 'key',
+  providers: 'provider',
   quit: 'exit',
   history: 'chats',
   conversations: 'chats',
@@ -103,16 +103,22 @@ export const SLASH = {
     summary: 'CLI version, cloud, session, inference key',
     detail: 'Prints the same snapshot as scalattice whoami.',
   },
-  key: {
-    usage: '/key [show|roll|revoke]',
-    summary: 'Show, rotate, or revoke the Bracket inference key',
+  provider: {
+    usage: '/provider [list|add|use|rm|key]',
+    summary: 'Inference providers and their keys',
     detail:
-      'Bare /key shows the source (env or bracket.key), last four, and file path.\n' +
-      'It never prints the full secret in this chat.\n' +
-      '/key roll issues a new secret, writes bracket.key, and uses it for this session.\n' +
-      '/key revoke deletes the Cloud key and the local file.\n' +
-      'If SCALATTICE_API_KEY is set, it still wins on the next launch until you unset it.\n' +
-      'Same as: scalattice bracket key [show|roll|revoke]',
+      'Bare /provider lists records. Scalattice is builtin and cannot be removed.\n' +
+      '/provider use NAME              switch provider (and its model)\n' +
+      '/provider add NAME URL          add an OpenAI-compatible endpoint\n' +
+      '/provider rm NAME               delete a custom provider (not Scalattice)\n' +
+      '/provider url URL               change the URL of the active custom provider\n' +
+      '/provider key                   show the active provider key (never the full secret here)\n' +
+      '/provider key set SECRET        write a key by hand\n' +
+      '/provider key new               mint a Scalattice key named "CLI bracket"\n' +
+      '/provider key roll              rotate, or mint if the Cloud key was revoked\n' +
+      '/provider key revoke            revoke Cloud key and delete the local secret\n' +
+      'Scalattice keys live in ~/.config/scalattice/bracket.key (mode 0600).\n' +
+      'Same as: scalattice bracket provider …',
   },
   settings: {
     usage: '/settings',
@@ -196,8 +202,8 @@ function currentValue(name, settings = {}) {
       return s.stream === false ? s.security || 'tier1' : 'tier1';
     case 'yolo':
       return s.yolo ? 'on' : 'off';
-    case 'model':
-      return s.model || '';
+    case 'provider':
+      return s.provider || s.providerId || 'scalattice';
     default:
       return '';
   }
@@ -288,7 +294,7 @@ function commandNames() {
   return [...new Set([...Object.keys(SLASH), ...Object.keys(ALIAS)])].sort();
 }
 
-function argCandidates(cmd, ctx) {
+function argCandidates(cmd, ctx, after = '') {
   switch (cmd) {
     case 'help':
       return Object.keys(SLASH);
@@ -304,8 +310,23 @@ function argCandidates(cmd, ctx) {
       return ['tier1', 'tier2.5'];
     case 'chats':
       return ['all'];
-    case 'key':
-      return ['show', 'roll', 'revoke'];
+    case 'provider': {
+      const tokens = String(after).trim().split(/\s+/).filter(Boolean);
+      const typed = /\s$/.test(after) ? tokens : tokens.slice(0, -1);
+      if (typed[0] === 'key' || typed[0] === 'keys') {
+        return ['show', 'set', 'new', 'roll', 'revoke'];
+      }
+      return [
+        'list',
+        'add',
+        'use',
+        'rm',
+        'remove',
+        'url',
+        'key',
+        ...(ctx.providers || []).map(String),
+      ];
+    }
     case 'model':
       return (ctx.models || []).map(String);
     case 'chat':
@@ -346,9 +367,10 @@ export function completeSlash(input, ctx = {}) {
   }
 
   const cmd = canonSlash(line.slice(1, space));
+  const after = line.slice(space + 1);
   const last = /\s$/.test(line) ? '' : line.slice(line.search(/\S+$/));
   const head = line.slice(0, line.length - last.length);
-  const hits = argCandidates(cmd, ctx).filter((c) =>
+  const hits = argCandidates(cmd, ctx, after).filter((c) =>
     String(c).toLowerCase().startsWith(String(last).toLowerCase())
   );
   const uniq = [...new Set(hits)];

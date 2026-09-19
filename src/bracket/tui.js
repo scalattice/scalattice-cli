@@ -48,6 +48,101 @@ export function splitLineSubmit(chunk) {
   return { line: m[1], rest: s.slice(m[0].length) };
 }
 
+function parseSgrMouse(seq) {
+  const m = /^\x1b\[<(\d+);(\d+);(\d+)([Mm])$/.exec(seq);
+  if (!m) return null;
+  return {
+    type: 'mouse',
+    btn: Number(m[1]),
+    x: Number(m[2]),
+    y: Number(m[3]),
+    release: m[4] === 'm',
+  };
+}
+
+function parseX10Mouse(seq) {
+  if (seq.length < 6 || !seq.startsWith('\x1b[M')) return null;
+  return {
+    type: 'mouse',
+    btn: seq.charCodeAt(3) - 32,
+    x: seq.charCodeAt(4) - 32,
+    y: seq.charCodeAt(5) - 32,
+    release: ((seq.charCodeAt(3) - 32) & 3) === 3,
+  };
+}
+
+/**
+ * Split stdin into complete events. Hold incomplete CSI / mouse so a
+ * highlight or wheel split across reads cannot leak `64;80;24M` into the prompt.
+ */
+export function takeInputEvents(raw) {
+  let s = String(raw || '');
+  const events = [];
+  while (s) {
+    if (s[0] !== '\x1b') {
+      const i = s.indexOf('\x1b');
+      const data = i === -1 ? s : s.slice(0, i);
+      events.push({ type: 'text', data });
+      s = i === -1 ? '' : s.slice(i);
+      continue;
+    }
+    if (s.length === 1) return { events, rest: s };
+
+    if (s[1] === 'O') {
+      if (s.length < 3) return { events, rest: s };
+      events.push({ type: 'ss3', data: s.slice(0, 3) });
+      s = s.slice(3);
+      continue;
+    }
+
+    if (s[1] === ']') {
+      const bel = s.indexOf('\x07');
+      const st = s.indexOf('\x1b\\');
+      let end = -1;
+      if (bel !== -1) end = bel + 1;
+      if (st !== -1 && (end === -1 || st + 2 < end)) end = st + 2;
+      if (end === -1) return { events, rest: s };
+      s = s.slice(end);
+      continue;
+    }
+
+    if (s[1] === '[') {
+      if (s[2] === 'M') {
+        if (s.length < 6) return { events, rest: s };
+        const mouse = parseX10Mouse(s.slice(0, 6));
+        if (mouse) events.push(mouse);
+        s = s.slice(6);
+        continue;
+      }
+      let i = 2;
+      while (i < s.length) {
+        const c = s.charCodeAt(i);
+        if (c >= 0x20 && c <= 0x3f) {
+          i += 1;
+          continue;
+        }
+        if (c >= 0x40 && c <= 0x7e) {
+          const seq = s.slice(0, i + 1);
+          s = s.slice(i + 1);
+          const mouse = parseSgrMouse(seq);
+          events.push(mouse || { type: 'csi', data: seq });
+          i = -1;
+          break;
+        }
+        s = s.slice(1);
+        i = -1;
+        break;
+      }
+      if (i === -1) continue;
+      return { events, rest: s };
+    }
+
+    events.push({ type: 'esc', data: s.slice(0, 2) });
+    s = s.slice(2);
+  }
+  return { events, rest: '' };
+}
+
 function paint(code, s) {
   return tty() ? `${code}${s}${RESET}` : s;
 }
@@ -116,7 +211,7 @@ function identityLines(meta = {}) {
   const rest = [
     `${paint(TEXT, `${BOLD}Scalattice Bracket`)}${paint(MUTED, ver)}`,
     paint(MUTED, meta.cwd || process.cwd()),
-    paint(MUTED, `${meta.model || ''} · ${mode}`),
+    paint(MUTED, `${meta.provider ? `${meta.provider} · ` : ''}${meta.model || ''} · ${mode}`),
   ];
   if (meta.chat) rest.push(paint(MUTED, meta.chat));
   if (meta.policy) rest.push(paint(MUTED, meta.policy));
@@ -365,6 +460,7 @@ export function createTui(opts = {}) {
   const complete = typeof opts.complete === 'function' ? opts.complete : null;
   let raw = false;
   let pasting = false;
+  let inBuf = '';
   let lineBuf = '';
   let waiter = null;
   let thinkOpen = false;
@@ -375,6 +471,7 @@ export function createTui(opts = {}) {
   let alive = false;
   let busySince = 0;
   let cancelWork = null;
+  let cancelArmed = false;
   let tick = null;
   let records = [];
   let partial = '';
@@ -574,36 +671,35 @@ export function createTui(opts = {}) {
       scrollBy(Math.max(1, Math.floor(viewHeight() / 2)));
       return true;
     }
-    const wheel = /^\x1b\[<(64|65);(\d+);(\d+)[Mm]/.exec(s);
-    if (wheel) {
-      const x = Number(wheel[2]);
+    return false;
+  }
+
+  function handleMouse(ev) {
+    if (!ev || pasting) return;
+    const btn = Number(ev.btn) || 0;
+    const wheelUp = btn === 64 || btn === 80 || btn === 96;
+    const wheelDown = btn === 65 || btn === 81 || btn === 97;
+    if (wheelUp || wheelDown) {
       const lay = frame();
-      if (lay.showSide && x > lay.mainW) {
-        scrollChats(wheel[1] === '64' ? -1 : 1);
+      if (lay.showSide && Number(ev.x) > lay.mainW) {
+        scrollChats(wheelUp ? -1 : 1);
       } else {
-        scrollBy(wheel[1] === '64' ? 3 : -3);
+        scrollBy(wheelUp ? 3 : -3);
       }
-      return true;
+      return;
     }
-    const click = /^\x1b\[<0;(\d+);(\d+)([Mm])/.exec(s);
-    if (click) {
-      const released = click[3] === 'm';
-      if (!released && !busySince && waiter?.kind !== 'key') {
-        const x = Number(click[1]);
-        const y = Number(click[2]);
-        const hit = chatHits.find((h) => y === h.row && x >= h.x0 && x <= h.x1);
-        if (hit && typeof opts.onOpenChat === 'function') {
-          try {
-            opts.onOpenChat({ n: hit.n, id: hit.id });
-          } catch {
-            /* ignore */
-          }
+    if ((btn === 0 || btn === 32) && !ev.release && !busySince && waiter?.kind !== 'key') {
+      const x = Number(ev.x);
+      const y = Number(ev.y);
+      const hit = chatHits.find((h) => y === h.row && x >= h.x0 && x <= h.x1);
+      if (hit && typeof opts.onOpenChat === 'function') {
+        try {
+          opts.onOpenChat({ n: hit.n, id: hit.id });
+        } catch {
+          /* ignore */
         }
       }
-      return true;
     }
-    if (/^\x1b\[<\d+;\d+;\d+[Mm]/.test(s)) return true;
-    return false;
   }
 
   function scrollChats(n) {
@@ -740,23 +836,71 @@ export function createTui(opts = {}) {
     }
   }
 
-  function onData(chunk) {
-    const s = String(chunk);
-    if (s === '\x03') {
-      if (busySince && cancelWork) {
-        cancelWork();
-        return;
+  function restoreTerminal() {
+    try {
+      write('\x1b[r');
+      write(MOUSE_OFF + PASTE_OFF + SHOW + ALT_OFF);
+    } catch {
+      /* ignore */
+    }
+    if (raw && typeof input.setRawMode === 'function') {
+      try {
+        input.setRawMode(false);
+      } catch {
+        /* ignore */
       }
-      if (waiter) {
-        const err = Object.assign(new Error('Interrupted'), { interrupted: true });
-        finishWait((w) => w.reject(err));
-      } else {
-        process.emit('SIGINT');
+      raw = false;
+    }
+  }
+
+  function interruptFromInput() {
+    inBuf = '';
+    const hadWaiter = Boolean(waiter);
+    if (waiter) {
+      const err = Object.assign(new Error('Interrupted'), { interrupted: true });
+      finishWait((w) => w.reject(err));
+    }
+    if (busySince && cancelWork) {
+      if (cancelArmed) {
+        restoreTerminal();
+        process.exit(130);
+      }
+      cancelArmed = true;
+      try {
+        cancelWork();
+      } catch {
+        /* ignore */
       }
       return;
     }
-    if (waiter?.kind === 'line' && !pasting && (s === '\t' || s === '\x1b[Z')) {
-      applyTab(s === '\x1b[Z');
+    if (!hadWaiter) process.emit('SIGINT');
+  }
+
+  function feedSeq(data) {
+    if (waiter?.kind === 'line' && !pasting && data === '\x1b[Z') {
+      applyTab(true);
+      return;
+    }
+    if (handleNav(data)) return;
+    if (data === '\x1b[200~') {
+      pasting = true;
+      return;
+    }
+    if (data === '\x1b[201~') {
+      pasting = false;
+      return;
+    }
+    if (data === '\x1bOM') feedText('\n');
+  }
+
+  function feedText(s) {
+    if (!s) return;
+    if (s.includes('\x03')) {
+      interruptFromInput();
+      return;
+    }
+    if (waiter?.kind === 'line' && !pasting && s === '\t') {
+      applyTab(false);
       return;
     }
     if (handleNav(s)) return;
@@ -767,23 +911,11 @@ export function createTui(opts = {}) {
       }
       return;
     }
-    if (s === '\x1b[200~') {
-      pasting = true;
-      return;
-    }
-    if (s === '\x1b[201~') {
-      pasting = false;
-      return;
-    }
-
     if (waiter.kind === 'key') {
       const ch = s[0];
       if (ch && ch !== '\x1b') finishWait((w) => w.resolve(ch.toLowerCase()));
       return;
     }
-
-    if (s.startsWith('\x1b') && s !== '\x1bOM') return;
-
     if (waiter.kind === 'line' && !pasting) {
       const hit = splitLineSubmit(s);
       if (hit) {
@@ -794,6 +926,7 @@ export function createTui(opts = {}) {
         tabHint = '';
         paintInput();
         finishWait((w) => w.resolve(value));
+        if (hit.rest) feedText(hit.rest);
         return;
       }
     }
@@ -810,6 +943,22 @@ export function createTui(opts = {}) {
       tabCycle = null;
       tabHint = '';
       waiter.redraw();
+    }
+  }
+
+  function onData(chunk) {
+    const rawChunk = String(chunk);
+    if (rawChunk.includes('\x03')) {
+      interruptFromInput();
+      return;
+    }
+    inBuf += rawChunk;
+    const { events, rest } = takeInputEvents(inBuf);
+    inBuf = rest.length > 96 ? '' : rest;
+    for (const ev of events) {
+      if (ev.type === 'mouse') handleMouse(ev);
+      else if (ev.type === 'csi' || ev.type === 'ss3') feedSeq(ev.data);
+      else if (ev.type === 'text') feedText(ev.data);
     }
   }
 
@@ -831,26 +980,16 @@ export function createTui(opts = {}) {
     leave() {
       alive = false;
       stopWork();
+      cancelWork = null;
+      cancelArmed = false;
       if (paintSoon) {
         clearTimeout(paintSoon);
         paintSoon = null;
       }
       output.off('resize', onResize);
       input.off('data', onData);
-      try {
-        write('\x1b[r');
-        write(MOUSE_OFF + PASTE_OFF + SHOW + ALT_OFF);
-      } catch {
-        /* ignore */
-      }
-      if (raw && typeof input.setRawMode === 'function') {
-        try {
-          input.setRawMode(false);
-        } catch {
-          /* ignore */
-        }
-        raw = false;
-      }
+      inBuf = '';
+      restoreTerminal();
       try {
         input.pause();
         if (typeof input.unref === 'function') input.unref();
@@ -881,6 +1020,7 @@ export function createTui(opts = {}) {
     },
     beginWork(onCancel) {
       busySince = Date.now();
+      cancelArmed = false;
       cancelWork = typeof onCancel === 'function' ? onCancel : null;
       if (tick) clearInterval(tick);
       tick = setInterval(() => paintInput(), 100);
@@ -888,6 +1028,7 @@ export function createTui(opts = {}) {
     },
     endWork() {
       cancelWork = null;
+      cancelArmed = false;
       stopWork();
       if (paintSoon) {
         clearTimeout(paintSoon);
@@ -971,6 +1112,18 @@ export function createTui(opts = {}) {
     tool(summary) {
       append(`  ${paint(ACCENT, '▸')} ${paint(MUTED, summary)}\n`);
     },
+    toolResult(result) {
+      const text = String(result || '').trim();
+      if (!text) return;
+      const err = /^Error:/i.test(text);
+      const lines = text.split('\n');
+      let preview = lines.slice(0, 8).join('\n');
+      if (lines.length > 8) preview += '\n…';
+      if (preview.length > 600) preview = `${preview.slice(0, 597)}…`;
+      for (const line of preview.split('\n')) {
+        append(`    ${paint(err ? RED : MUTED, line)}\n`);
+      }
+    },
     error(s) {
       append(`\n  ${paint(RED, s)}\n`);
     },
@@ -1014,9 +1167,9 @@ export function createTui(opts = {}) {
       });
     },
     async approve(toolName, summary) {
-      write(`\n  ${paint(TEXT, 'Allow')} ${paint(ACCENT, toolName)}?\n`);
-      write(`  ${paint(MUTED, summary)}\n`);
-      write(`  ${paint(MUTED, '[y]es  [n]o  [a]lways')}\n`);
+      this.note(
+        `Allow ${toolName}?\n${summary}\n[y]es  [n]o  [a]lways   Ctrl+C cancels`
+      );
       const key = await new Promise((resolve, reject) => {
         waiter = { kind: 'key', resolve, reject };
       });

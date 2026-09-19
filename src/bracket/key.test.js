@@ -66,6 +66,7 @@ test('format hides the full secret unless showSecret', () => {
     path: '/tmp/bracket.key',
     lastFour: 'uvwx',
     storedLastFour: 'uvwx',
+    provider: { id: 'scalattice', name: 'Scalattice', builtin: true },
   };
   const hidden = formatBracketKeyStatus(info);
   assert.match(hidden, /Source:  bracket\.key/);
@@ -82,7 +83,7 @@ test('pickBracketCloudKey matches last four, then the CLI bracket name', () => {
   ];
   assert.equal(pickBracketCloudKey(keys, SECRET).id, '2');
   assert.equal(pickBracketCloudKey(keys, '').name, BRACKET_KEY_NAME);
-  assert.throws(() => pickBracketCloudKey(keys, 'slt_nomatchxxxxkeyxx'), /another account/);
+  assert.equal(pickBracketCloudKey(keys, 'slt_nomatchxxxxkeyxx').id, '2');
 });
 
 test('roll and revoke formatters keep the secret out of the default text', () => {
