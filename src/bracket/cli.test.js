@@ -22,7 +22,7 @@ test('scalattice --help still documents login and mcp', () => {
   assert.match(r.stdout, /scalattice mcp/);
   assert.match(r.stdout, /scalattice update/);
   assert.match(r.stdout, /scalattice bracket/);
-  assert.match(r.stdout, /scalattice bracket key/);
+  assert.match(r.stdout, /scalattice bracket provider key/);
   assert.doesNotMatch(r.stdout, /scalattice agent\b/);
 });
 
@@ -38,8 +38,8 @@ test('scalattice bracket --help names Bracket', () => {
   assert.match(r.stdout, /\/help \[command\]/);
   assert.match(r.stdout, /\/chats/);
   assert.match(r.stdout, /\/tools/);
-  assert.match(r.stdout, /\/key/);
-  assert.match(r.stdout, /bracket key \[show\|roll\|revoke\]/);
+  assert.match(r.stdout, /\/provider/);
+  assert.match(r.stdout, /bracket provider key \[show\|set\|new\|roll\|revoke\]/);
   assert.match(r.stdout, /Tab completes/);
 });
 
@@ -168,6 +168,53 @@ test('line submit accepts CR, LF, CRLF, and a line glued to enter', async () => 
   assert.deepEqual(splitLineSubmit('/help\r\nmore'), { line: '/help', rest: 'more' });
 });
 
+test('mouse highlight and wheel sequences never leak into typed text', async () => {
+  const { takeInputEvents } = await import('./tui.js');
+  const textOf = (buf) =>
+    takeInputEvents(buf)
+      .events.filter((e) => e.type === 'text')
+      .map((e) => e.data)
+      .join('');
+
+  const wheel = takeInputEvents('\x1b[<64;80;24M');
+  assert.equal(wheel.rest, '');
+  assert.equal(wheel.events.length, 1);
+  assert.equal(wheel.events[0].type, 'mouse');
+  assert.equal(wheel.events[0].btn, 64);
+  assert.equal(textOf('\x1b[<64;80;24M'), '');
+
+  const drag = '\x1b[<0;10;5M\x1b[<32;11;5M\x1b[<32;12;6M\x1b[<0;12;6m';
+  assert.equal(textOf(drag), '');
+  assert.equal(takeInputEvents(drag).events.every((e) => e.type === 'mouse'), true);
+
+  const split = takeInputEvents('\x1b[<64;80;24');
+  assert.equal(split.events.length, 0);
+  assert.equal(split.rest, '\x1b[<64;80;24');
+  const done = takeInputEvents(`${split.rest}Mhello`);
+  assert.equal(done.events[0].type, 'mouse');
+  assert.equal(
+    done.events
+      .filter((e) => e.type === 'text')
+      .map((e) => e.data)
+      .join(''),
+    'hello'
+  );
+
+  const x10cut = takeInputEvents('\x1b[M');
+  assert.equal(x10cut.events.length, 0);
+  const x10 = takeInputEvents(`\x1b[M${String.fromCharCode(32 + 64, 32 + 8, 32 + 3)}`);
+  assert.equal(x10.events[0].type, 'mouse');
+  assert.equal(x10.events[0].btn, 64);
+  assert.equal(textOf(`\x1b[M${String.fromCharCode(32 + 0, 32 + 4, 32 + 4)}abc`), 'abc');
+
+  const mixed = takeInputEvents('\x1b[<0;1;1M/help\x1b[<65;2;2m');
+  assert.deepEqual(
+    mixed.events.map((e) => e.type),
+    ['mouse', 'text', 'mouse']
+  );
+  assert.equal(mixed.events[1].data, '/help');
+});
+
 test('elapsed time is compact ASCII', async () => {
   const { formatElapsed } = await import('./tui.js');
   assert.equal(formatElapsed(0), '0.0s');
@@ -258,7 +305,7 @@ test('whoami reports an env inference key even without a Cloud session', () => {
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /Inference: env \(…uvwx\)/);
   assert.match(r.stdout, /scalattice bracket/);
-  assert.match(r.stdout, /scalattice bracket key/);
+  assert.match(r.stdout, /scalattice bracket provider key/);
   assert.doesNotMatch(r.stdout, /slt_abcdefghijklmnopqrstuvwx/);
 });
 
@@ -279,7 +326,7 @@ test('whoami reports bracket.key when env is empty', () => {
   });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /Inference: bracket\.key \(…wxyz\)/);
-  assert.match(r.stdout, /scalattice bracket key/);
+  assert.match(r.stdout, /scalattice bracket provider key/);
   assert.doesNotMatch(r.stdout, /slt_filekeystoredherewxyz/);
 });
 
@@ -295,14 +342,24 @@ test('scalattice bracket key shows the file and does not start the TUI', () => {
     SCALATTICE_API_KEY: '',
     OPENAI_API_KEY: '',
   };
+  const nested = spawnSync(process.execPath, [bin, 'bracket', 'provider', 'key'], {
+    encoding: 'utf8',
+    env,
+  });
+  assert.equal(nested.status, 0, nested.stderr);
+  assert.match(nested.stdout, /Source:  bracket\.key/);
+  assert.match(nested.stdout, /…uvwx/);
+  assert.doesNotMatch(nested.stdout, /slt_abcdefghijklmnopqrstuvwx/);
+  assert.doesNotMatch(nested.stdout, /coding harness/);
+
   const shown = spawnSync(process.execPath, [bin, 'bracket', 'key'], { encoding: 'utf8', env });
   assert.equal(shown.status, 0, shown.stderr);
   assert.match(shown.stdout, /Source:  bracket\.key/);
-  assert.match(shown.stdout, /…uvwx/);
-  assert.doesNotMatch(shown.stdout, /slt_abcdefghijklmnopqrstuvwx/);
-  assert.doesNotMatch(shown.stdout, /coding harness/);
 
-  const full = spawnSync(process.execPath, [bin, 'bracket', 'key', '--show'], { encoding: 'utf8', env });
+  const full = spawnSync(process.execPath, [bin, 'bracket', 'provider', 'key', '--show'], {
+    encoding: 'utf8',
+    env,
+  });
   assert.equal(full.status, 0, full.stderr);
   assert.match(full.stdout, /Full:    slt_abcdefghijklmnopqrstuvwx/);
 
@@ -310,8 +367,11 @@ test('scalattice bracket key shows the file and does not start the TUI', () => {
   assert.equal(alias.status, 0, alias.stderr);
   assert.match(alias.stdout, /Source:  bracket\.key/);
 
-  const bad = spawnSync(process.execPath, [bin, 'bracket', 'key', 'nope'], { encoding: 'utf8', env });
+  const bad = spawnSync(process.execPath, [bin, 'bracket', 'provider', 'key', 'nope'], {
+    encoding: 'utf8',
+    env,
+  });
   assert.notEqual(bad.status, 0);
-  assert.match(String(bad.stderr || bad.stdout), /Usage: scalattice bracket key/);
+  assert.match(String(bad.stderr || bad.stdout), /Usage: scalattice bracket provider key/);
 });
 

@@ -24,3 +24,13 @@ test('auth hints name developer keys, not a git checkout', async () => {
     'That is an account management key (slt_mgmt_…). Bracket needs a developer inference key (slt_…).'
   );
 });
+
+test('isIncorrectApiKey matches inference 401s', async () => {
+  const { isIncorrectApiKey } = await import('../session.js');
+  assert.equal(isIncorrectApiKey({ status: 401 }), true);
+  assert.equal(isIncorrectApiKey({ status: 503 }), false);
+  assert.equal(
+    isIncorrectApiKey(new Error('API 401 https://api.scalattice.cloud/v1/chat/completions: Incorrect API key provided')),
+    true
+  );
+});

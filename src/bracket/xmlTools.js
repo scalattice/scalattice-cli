@@ -138,9 +138,23 @@ export function parseFallbackToolCalls(content) {
     add(makeCall(name, args, calls.length));
   }
 
-  const jsonBlock = /<tool_call>\s*(\{[\s\S]*?\})\s*<\/tool_call>/gi;
-  while ((m = jsonBlock.exec(text))) {
-    add(callFromObject(parseArgsJson(m[1]), calls.length));
+  const tagged = /<tool_call>\s*([\s\S]*?)<\/tool_call>/gi;
+  while ((m = tagged.exec(text))) {
+    const inner = m[1].trim();
+    if (inner.startsWith('<function=')) continue;
+    if (inner.startsWith('{')) {
+      const obj = extractJsonObjects(inner)[0];
+      add(callFromObject(obj, calls.length));
+      continue;
+    }
+    const argKey = /<arg_key>\s*([\s\S]*?)\s*<\/arg_key>\s*<arg_value>\s*([\s\S]*?)\s*<\/arg_value>/gi;
+    const args = {};
+    let k;
+    while ((k = argKey.exec(inner))) {
+      args[k[1].trim()] = k[2].trim();
+    }
+    const name = inner.split('\n')[0].trim().replace(/[<>]/g, '');
+    if (name && KNOWN_TOOLS.has(name)) add(makeCall(name, args, calls.length));
   }
 
   for (const obj of extractJsonObjects(text)) {

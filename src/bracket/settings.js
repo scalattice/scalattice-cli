@@ -80,6 +80,7 @@ export function patchSettings(current, patch) {
 
 export function routingHeaders(settings) {
   const s = settings || {};
+  if (s.providerId && s.providerId !== 'scalattice') return {};
   const stream = s.stream !== false;
   return {
     'X-Scalattice-Region': regionOf(s.region, 'auto'),
@@ -91,6 +92,13 @@ export function routingHeaders(settings) {
 export function settingsLine(settings) {
   const s = settings || {};
   const stream = s.stream !== false;
+  if (s.providerId && s.providerId !== 'scalattice') {
+    return [
+      `provider ${s.providerId}`,
+      `stream ${stream ? 'on' : 'off'}`,
+      `think ${s.thinking === false ? 'off' : 'on'}`,
+    ].join(' · ');
+  }
   return [
     `stream ${stream ? 'on' : 'off'}`,
     `think ${s.thinking === false ? 'off' : 'on'}`,

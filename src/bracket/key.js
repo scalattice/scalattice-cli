@@ -7,6 +7,13 @@ import {
   looksLikeInferenceKey,
   sessionRefreshHint,
 } from '../session.js';
+import {
+  clearActiveProviderKey,
+  getActiveProvider,
+  isScalatticeProvider,
+  providerKey,
+  setActiveProviderKey,
+} from './providers.js';
 
 export const BRACKET_KEY_NAME = 'CLI bracket';
 
@@ -110,9 +117,7 @@ export function pickBracketCloudKey(keys, secret) {
         `Multiple inference keys end in …${four}. Pick one: scalattice developers keys list`
       );
     }
-    throw new Error(
-      `No Cloud key ends in …${four}. This file may be from another account.`
-    );
+    return active.find((k) => String(k.name || '') === BRACKET_KEY_NAME) || null;
   }
   return active.find((k) => String(k.name || '') === BRACKET_KEY_NAME) || null;
 }
@@ -144,16 +149,41 @@ function envOverrideNote(info) {
   );
 }
 
+export function inspectActiveKey() {
+  const rec = getActiveProvider();
+  if (!isScalatticeProvider(rec)) {
+    const secret = providerKey(rec);
+    return {
+      source: secret ? 'provider' : 'none',
+      envWins: false,
+      secret,
+      storedKey: secret,
+      path: rec.id,
+      lastFour: lastFourOf(secret),
+      storedLastFour: lastFourOf(secret),
+      provider: rec,
+    };
+  }
+  return { ...inspectBracketKey(), provider: rec };
+}
+
 export function formatBracketKeyStatus(info, { showSecret = false, cloud = null, sessionSecret = '' } = {}) {
-  const lines = ['Inference key'];
+  const rec = info.provider || getActiveProvider();
+  const lines = [`Inference key  (${rec?.name || 'Scalattice'})`];
   if (info.source === 'env') {
     lines.push('Source:  env (SCALATTICE_API_KEY / OPENAI_API_KEY)');
   } else if (info.source === 'bracket.key') {
     lines.push('Source:  bracket.key');
+  } else if (info.source === 'provider') {
+    lines.push(`Source:  provider ${rec?.id || ''}`);
   } else {
     lines.push('Source:  none');
   }
-  lines.push(`File:    ${info.path}${info.storedKey ? '' : ' (none)'}`);
+  if (isScalatticeProvider(rec)) {
+    lines.push(`File:    ${info.path}${info.storedKey ? '' : ' (none)'}`);
+  } else {
+    lines.push(`API:     ${rec?.apiUrl || ''}`);
+  }
   if (info.storedKey && info.source === 'env') {
     const same = info.storedKey === info.secret ? ', same as env' : ', unused while env is set';
     lines.push(`         …${info.storedLastFour}${same}`);
@@ -167,10 +197,18 @@ export function formatBracketKeyStatus(info, { showSecret = false, cloud = null,
     lines.push(`Cloud:   ${cloud.name || 'unnamed'}  ${cloud.id}  …${cloud.lastFour || '????'}`);
   }
   if (info.source === 'none') {
-    lines.push('First `scalattice bracket` mints a key named "CLI bracket".');
-    lines.push('Or: scalattice bracket key roll');
+    if (isScalatticeProvider(rec)) {
+      lines.push('Set one:  /provider key set slt_…     or  /provider key new  (mints CLI bracket)');
+      lines.push('Or: scalattice bracket provider key set slt_…   |   scalattice bracket provider key new');
+    } else {
+      lines.push('Set one:  /provider key set SECRET');
+    }
   } else {
-    lines.push('Manage:  scalattice bracket key roll | revoke');
+    lines.push(
+      isScalatticeProvider(rec)
+        ? 'Manage:  /provider key set | new | roll | revoke'
+        : 'Manage:  /provider key set SECRET   (roll/new are Scalattice-only)'
+    );
     const note = envOverrideNote(info);
     if (note) lines.push(note);
   }
@@ -178,9 +216,10 @@ export function formatBracketKeyStatus(info, { showSecret = false, cloud = null,
 }
 
 export async function describeBracketKey(cfg = loadConfig(), { sessionSecret = '' } = {}) {
-  const info = inspectBracketKey();
+  const info = inspectActiveKey();
   let cloud = null;
-  if (cfg.sessionToken || cfg.mgmtKey) {
+  const rec = info.provider || getActiveProvider();
+  if (isScalatticeProvider(rec) && (cfg.sessionToken || cfg.mgmtKey)) {
     try {
       const keys = await listActiveKeys(cfg);
       const secret = sessionSecret || info.secret;
@@ -224,35 +263,75 @@ export function formatRevokeResult(result) {
       'SCALATTICE_API_KEY is still set. Unset it, or the next launch will keep using that (now revoked) secret.'
     );
   } else {
-    lines.push('Next `scalattice bracket` will mint a new key. Or: scalattice bracket key roll');
+    lines.push('Next `scalattice bracket` will mint a new key. Or: scalattice bracket provider key new');
   }
   return lines.join('\n');
 }
 
+export function requireScalatticeKeyCommand() {
+  const rec = getActiveProvider();
+  if (!isScalatticeProvider(rec)) {
+    throw new Error(
+      `Provider "${rec.name}" is not Scalattice. Set its key with: /provider key set SECRET`
+    );
+  }
+  return rec;
+}
+
+export function formatSetResult(rec, secret) {
+  const four = lastFourOf(secret);
+  if (isScalatticeProvider(rec)) {
+    return `Wrote Scalattice key …${four} → ${bracketKeyPath()}`;
+  }
+  return `Wrote key for ${rec.name} (…${four})`;
+}
+
+export async function createBracketKey(cfg = loadConfig()) {
+  requireCloud(cfg);
+  requireScalatticeKeyCommand();
+  const info = inspectBracketKey();
+  const secret = await mintBracketKey(cfg, { quiet: true });
+  return {
+    action: 'created',
+    secret,
+    path: bracketKeyPath(),
+    envWins: info.envWins,
+    cloud: { name: BRACKET_KEY_NAME, lastFour: lastFourOf(secret) },
+  };
+}
+
 export async function rollBracketKey(cfg = loadConfig(), { sessionSecret = '' } = {}) {
   requireCloud(cfg);
+  requireScalatticeKeyCommand();
   const info = inspectBracketKey();
   const keys = await listActiveKeys(cfg);
   const secretForPick = sessionSecret || info.secret;
-  let cloud = null;
-  if (secretForPick) {
-    cloud = pickBracketCloudKey(keys, secretForPick);
-  } else {
-    cloud = keys.find((k) => String(k.name || '') === BRACKET_KEY_NAME) || null;
-  }
+  const cloud = secretForPick
+    ? pickBracketCloudKey(keys, secretForPick)
+    : keys.find((k) => String(k.name || '') === BRACKET_KEY_NAME) || null;
 
   let secret;
   let action = 'rolled';
+  let nextCloud = cloud;
   if (cloud) {
-    const data = await cloudKeys(cfg, `/api/v1/developers/keys/${cloud.id}/roll`, {
-      method: 'POST',
-      body: {},
-    });
-    secret = data.secret;
-    cloud = { ...cloud, lastFour: lastFourOf(secret), id: data.key?.id || cloud.id };
+    try {
+      const data = await cloudKeys(cfg, `/api/v1/developers/keys/${cloud.id}/roll`, {
+        method: 'POST',
+        body: {},
+      });
+      secret = data.secret;
+      nextCloud = { ...cloud, lastFour: lastFourOf(secret), id: data.key?.id || cloud.id };
+    } catch (err) {
+      const msg = String(err?.message || '');
+      if (!/404|not found|revoked|invalid|gone/i.test(msg) && err?.status !== 404) throw err;
+      secret = await mintBracketKey(cfg, { quiet: true });
+      action = 'created';
+      nextCloud = { name: BRACKET_KEY_NAME, lastFour: lastFourOf(secret) };
+    }
   } else {
     secret = await mintBracketKey(cfg, { quiet: true });
     action = 'created';
+    nextCloud = { name: BRACKET_KEY_NAME, lastFour: lastFourOf(secret) };
   }
   if (!looksLikeInferenceKey(secret)) {
     throw new Error('Could not roll the Bracket inference key.');
@@ -263,11 +342,24 @@ export async function rollBracketKey(cfg = loadConfig(), { sessionSecret = '' } 
     secret,
     path: bracketKeyPath(),
     envWins: info.envWins,
-    cloud,
+    cloud: nextCloud,
   };
 }
 
 export async function revokeBracketKey(cfg = loadConfig(), { sessionSecret = '' } = {}) {
+  const rec = getActiveProvider();
+  if (!isScalatticeProvider(rec)) {
+    const had = Boolean(providerKey(rec));
+    if (!had) throw new Error(`No key stored for ${rec.name}.`);
+    clearActiveProviderKey();
+    return {
+      cloud: null,
+      hadFile: had,
+      cloudNote: '',
+      envWins: false,
+      path: rec.id,
+    };
+  }
   requireCloud(cfg);
   const info = inspectBracketKey();
   const keys = await listActiveKeys(cfg);
@@ -298,6 +390,9 @@ export async function revokeBracketKey(cfg = loadConfig(), { sessionSecret = '' 
   };
 }
 
+const KEY_USAGE =
+  'Usage: scalattice bracket provider key [show|set|new|roll|revoke] [--show]';
+
 export async function cmdBracketKey(rest = [], flags = {}) {
   const action = String(rest[0] || 'show').toLowerCase();
   const showSecret = Boolean(flags.show);
@@ -305,6 +400,17 @@ export async function cmdBracketKey(rest = [], flags = {}) {
   if (!action || action === 'show' || action === 'status') {
     const { info, cloud } = await describeBracketKey(cfg);
     print(formatBracketKeyStatus(info, { showSecret, cloud }));
+    return;
+  }
+  if (action === 'set') {
+    const secret = String(rest.slice(1).join(' ') || flags.key || '').trim();
+    if (!secret) throw new Error('Usage: scalattice bracket provider key set SECRET');
+    const rec = setActiveProviderKey(secret);
+    print(formatSetResult(rec, secret));
+    return;
+  }
+  if (action === 'new' || action === 'create') {
+    print(formatRollResult(await createBracketKey(cfg), { showSecret }));
     return;
   }
   if (action === 'roll') {
@@ -315,5 +421,5 @@ export async function cmdBracketKey(rest = [], flags = {}) {
     print(formatRevokeResult(await revokeBracketKey(cfg)));
     return;
   }
-  throw new Error('Usage: scalattice bracket key [show|roll|revoke] [--show]');
+  throw new Error(KEY_USAGE);
 }

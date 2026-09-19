@@ -56,3 +56,11 @@ export function isAuthFailure(err) {
   const msg = String(err?.message || '');
   return status === 401 || /invalid token|missing authentication|unauthor/i.test(msg);
 }
+
+/** Inference gateway (nginx) when the Bearer secret is unknown or revoked. */
+export function isIncorrectApiKey(err) {
+  const status = Number(err?.status);
+  const msg = String(err?.message || '');
+  if (status === 401) return true;
+  return /\b401\b/.test(msg) && /incorrect api key|invalid api key|api key revoked/i.test(msg);
+}

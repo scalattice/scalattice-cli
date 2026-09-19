@@ -54,6 +54,29 @@ test('read_file defaults to a slice not the whole file', async () => {
   assert.doesNotMatch(out, /line 200/);
 });
 
+test('bash abort kills a long-running command', async () => {
+  const os = await import('node:os');
+  const { createToolRunner } = await import('./tools.js');
+  const ac = new AbortController();
+  const run = createToolRunner({
+    cwd: os.tmpdir(),
+    permissions: { approve: async () => true },
+    todos: [],
+    signal: ac.signal,
+  });
+  const started = Date.now();
+  const pending = run({
+    function: {
+      name: 'bash',
+      arguments: JSON.stringify({ command: 'sleep 30', timeout_ms: 300000 }),
+    },
+  });
+  await new Promise((r) => setTimeout(r, 150));
+  ac.abort();
+  await assert.rejects(pending, (err) => err?.interrupted || /interrupted/i.test(err?.message || ''));
+  assert.ok(Date.now() - started < 5000, 'abort should not wait for sleep 30');
+});
+
 test('parse Qwen-style tool XML', () => {
   const calls = parseFallbackToolCalls(`
 <tool_call>
@@ -75,6 +98,26 @@ test('parse JSON tool_call block', () => {
   );
   assert.equal(calls[0].function.name, 'read_file');
   assert.equal(JSON.parse(calls[0].function.arguments).path, 'README.md');
+});
+
+test('parse tool_call JSON with nested braces in arguments', () => {
+  const calls = parseFallbackToolCalls(
+    '<tool_call>{"name":"write_file","arguments":{"path":"a.py","content":"def f():\\n    return {1: 2}\\n"}}</tool_call>'
+  );
+  assert.equal(calls[0].function.name, 'write_file');
+  assert.equal(JSON.parse(calls[0].function.arguments).content.includes('return {1: 2}'), true);
+});
+
+test('parse Qwen arg_key tool XML', () => {
+  const calls = parseFallbackToolCalls(`
+<tool_call>
+list_dir
+<arg_key>path</arg_key>
+<arg_value>.</arg_value>
+</tool_call>
+`);
+  assert.equal(calls[0].function.name, 'list_dir');
+  assert.equal(JSON.parse(calls[0].function.arguments).path, '.');
 });
 
 test('parse function/parameters JSON dumps without dropping later calls', () => {
@@ -144,7 +187,8 @@ test('slash help explains one command and settings are labeled', async () => {
   assert.match(index, /\/help \[command\]/);
   assert.match(index, /\/settings/);
   assert.match(index, /\/tools/);
-  assert.match(index, /\/key/);
+  assert.match(index, /\/provider/);
+  assert.doesNotMatch(index, /^\/key /m);
   assert.match(slashHelp('tools'), /Ask in the chat/);
   assert.doesNotMatch(index, /\/bash/);
   assert.doesNotMatch(index, /\/search/);
@@ -199,12 +243,17 @@ test('tab completes slash commands and arguments', async () => {
   );
   const models = completeSlash('/model q', { models: ['qwen-3-8b', 'qwen-3-32b'] });
   assert.ok(models.matches.some((m) => m.includes('qwen-3-8b')));
-  const key = completeSlash('/key ');
+  const providerCmds = completeSlash('/provider ');
+  assert.ok(providerCmds.matches.some((m) => m.includes('key')));
+  const key = completeSlash('/provider key ');
   assert.ok(key.matches.some((m) => m.includes('roll')));
   assert.ok(key.matches.some((m) => m.includes('revoke')));
-  const keyHelp = slashHelp('key');
-  assert.match(keyHelp, /\/key \[show\|roll\|revoke\]/);
-  assert.match(keyHelp, /bracket.key/);
+  assert.ok(key.matches.some((m) => m.includes('set')));
+  assert.ok(key.matches.some((m) => m.includes('new')));
+  const providerHelp = slashHelp('provider');
+  assert.match(providerHelp, /\/provider key/);
+  assert.match(providerHelp, /cannot be removed/i);
+  assert.match(providerHelp, /bracket.key/);
 });
 
 test('thinking tag is applied to the last user turn only', async () => {
@@ -285,6 +334,40 @@ test('inferenceUrl does not double /v1', async () => {
     inferenceUrl('https://api.scalattice.cloud', 'models'),
     'https://api.scalattice.cloud/v1/models'
   );
+});
+
+test('chatCompletion ignores SSE comment keepalives', async () => {
+  const { chatCompletion } = await import('./client.js');
+  const orig = globalThis.fetch;
+  globalThis.fetch = async () => {
+    const sse = [
+      ': scalattice-waiting',
+      '',
+      ': scalattice-keepalive',
+      '',
+      `data: ${JSON.stringify({ choices: [{ delta: { content: 'hi' } }] })}`,
+      'data: [DONE]',
+      '',
+    ].join('\n');
+    return new Response(sse, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+  };
+  try {
+    const parts = [];
+    const msg = await chatCompletion({
+      apiUrl: 'https://api.example',
+      apiKey: 'slt_x',
+      model: 'qwen',
+      messages: [{ role: 'user', content: 'hello' }],
+      onDelta: (p) => parts.push(p),
+    });
+    assert.equal(msg.content, 'hi');
+    assert.deepEqual(
+      parts.map((p) => p.type),
+      ['content']
+    );
+  } finally {
+    globalThis.fetch = orig;
+  }
 });
 
 test('chatCompletion streams by default and sends native headers', async () => {
@@ -480,6 +563,131 @@ test('runLoop sends tools, runs streamed tool_calls, then posts tool results', a
     assert.equal(bodies[1].messages.at(-2).tool_calls[0].function.name, 'grep');
     assert.equal(out.reason, 'stop');
     assert.match(out.messages.at(-1).content, /found it/);
+  } finally {
+    globalThis.fetch = orig;
+  }
+});
+
+test('runLoop continues when a post-tool reply only announces the next step', async () => {
+  const { runLoop, looksLikeStalledPlan } = await import('./loop.js');
+  assert.equal(
+    looksLikeStalledPlan('Looking at the workspace structure, I will now create a Python script.'),
+    true
+  );
+  assert.equal(looksLikeStalledPlan('Romulus Hill is a person. https://example.com'), false);
+  assert.equal(looksLikeStalledPlan('Here is what I found about Romulus Hill.'), false);
+
+  const orig = globalThis.fetch;
+  const bodies = [];
+  let n = 0;
+  globalThis.fetch = async (_url, opts) => {
+    bodies.push(JSON.parse(opts.body));
+    n += 1;
+    if (n === 1) {
+      const sse = [
+        `data: ${JSON.stringify({
+          choices: [
+            {
+              delta: {
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: 'call_ls',
+                    type: 'function',
+                    function: { name: 'list_dir', arguments: '{"path":"."}' },
+                  },
+                ],
+              },
+            },
+          ],
+        })}`,
+        `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'tool_calls' }] })}`,
+        'data: [DONE]',
+        '',
+      ].join('\n');
+      return new Response(sse, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+    }
+    if (n === 2) {
+      const sse = [
+        `data: ${JSON.stringify({
+          choices: [{ delta: { content: "Looking at the workspace, I'll now create the script." } }],
+        })}`,
+        'data: [DONE]',
+        '',
+      ].join('\n');
+      return new Response(sse, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+    }
+    const sse = [
+      `data: ${JSON.stringify({
+        choices: [{ delta: { content: 'Wrote /srv/python_script_test.py' } }],
+      })}`,
+      'data: [DONE]',
+      '',
+    ].join('\n');
+    return new Response(sse, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+  };
+  try {
+    const notes = [];
+    const out = await runLoop({
+      apiUrl: 'https://api.openai.com/v1',
+      apiKey: 'sk-test',
+      model: 'qwen',
+      messages: [{ role: 'user', content: 'write a script' }],
+      tools: [{ type: 'function', function: { name: 'list_dir' } }],
+      runTool: async () => 'index.js\npackage.json',
+      onRetry: (msg) => notes.push(msg),
+    });
+    assert.equal(n, 3);
+    assert.match(bodies[2].messages.at(-1).content, /Continue the task/);
+    assert.equal(out.reason, 'stop');
+    assert.match(out.messages.at(-1).content, /Wrote/);
+    assert.ok(notes.some((m) => /described the next step/i.test(m)));
+  } finally {
+    globalThis.fetch = orig;
+  }
+});
+
+test('runLoop stops the turn when a tool is interrupted', async () => {
+  const { runLoop } = await import('./loop.js');
+  const orig = globalThis.fetch;
+  globalThis.fetch = async () => {
+    const sse = [
+      `data: ${JSON.stringify({
+        choices: [
+          {
+            delta: {
+              tool_calls: [
+                {
+                  index: 0,
+                  id: 'call_bash',
+                  type: 'function',
+                  function: { name: 'bash', arguments: '{"command":"sleep 30"}' },
+                },
+              ],
+            },
+          },
+        ],
+      })}`,
+      `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'tool_calls' }] })}`,
+      'data: [DONE]',
+      '',
+    ].join('\n');
+    return new Response(sse, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+  };
+  try {
+    await assert.rejects(
+      runLoop({
+        apiUrl: 'https://api.openai.com/v1',
+        apiKey: 'sk-test',
+        model: 'gpt-4.1',
+        messages: [{ role: 'user', content: 'run' }],
+        tools: [{ type: 'function', function: { name: 'bash' } }],
+        runTool: async () => {
+          throw Object.assign(new Error('Interrupted'), { interrupted: true });
+        },
+      }),
+      (err) => err?.interrupted
+    );
   } finally {
     globalThis.fetch = orig;
   }

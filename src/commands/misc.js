@@ -170,7 +170,7 @@ export async function whoamiText(cfg = loadConfig()) {
       lines.push('Inference: none (no env, no bracket.key)');
     }
   }
-  lines.push('Manage:  scalattice bracket key   (show / roll / revoke)');
+  lines.push('Manage:  scalattice bracket provider key   (show / set / new / roll / revoke)');
   return lines.join('\n');
 }
 
