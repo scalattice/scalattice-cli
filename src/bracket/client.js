@@ -257,15 +257,25 @@ export async function chatCompletion({
   return out;
 }
 
+function modelContextTokens(row) {
+  const n = Number(row?.max_context_tokens ?? row?.maxContextTokens ?? row?.context_length);
+  return Number.isFinite(n) && n >= 1024 ? Math.floor(n) : 0;
+}
+
 export async function listModels({ apiUrl, apiKey } = {}) {
   const res = await fetch(inferenceUrl(apiUrl, '/models'), {
     headers: { Authorization: `Bearer ${apiKey}` },
   });
   if (!res.ok) throw new Error(`models ${res.status}`);
   const json = await res.json();
-  return (json.data || []).map((m) => m.id).filter(Boolean);
+  return (json.data || [])
+    .filter((m) => m && m.id)
+    .map((m) => ({
+      id: String(m.id),
+      maxContextTokens: modelContextTokens(m),
+    }));
 }
 
 export async function listModelIds(opts) {
-  return listModels(opts);
+  return (await listModels(opts)).map((m) => m.id);
 }
