@@ -8,6 +8,28 @@
 import { apiFetch, mgmtFetch } from '../api.js';
 import { loadConfig } from '../config.js';
 
+function adminApiPath(raw) {
+  let p = String(raw || '').trim();
+  if (!p) throw new Error('path is required');
+  if (/^[a-z][a-z0-9+.-]*:/i.test(p) || p.includes('..')) {
+    throw new Error('path must be a relative admin API path');
+  }
+  if (p.startsWith('/api/v1/admin')) p = p.slice('/api/v1/admin'.length) || '/';
+  if (!p.startsWith('/')) p = `/${p}`;
+  return `/api/v1/admin${p}`;
+}
+
+function withQuery(path, query) {
+  if (!query || typeof query !== 'object') return path;
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value == null || value === '') continue;
+    params.set(key, String(value));
+  }
+  const qs = params.toString();
+  return qs ? `${path}?${qs}` : path;
+}
+
 function writeMessage(msg) {
   const body = Buffer.from(JSON.stringify(msg), 'utf8');
   process.stdout.write(`Content-Length: ${body.length}\r\n\r\n`);
@@ -79,6 +101,44 @@ function listTools(cfg) {
           required: ['machineId'],
           additionalProperties: false,
         },
+      },
+      {
+        name: 'scalattice_admin_catalog',
+        description:
+          'List every admin-panel HTTP route (machines, Full Debug, catalog, users, billing). Requires an admin account. Start here before calling scalattice_admin.',
+        inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      },
+      {
+        name: 'scalattice_admin',
+        description:
+          'Call any admin-panel API the dashboard uses (same /api/v1/admin routes). Prefer GET /api first via scalattice_admin_catalog. For Full Debug: POST /machines/:id/debug with { full: true, sweep: true, fresh: true, pauseRouting: true, waitForJob: true }, then poll with sweep: true and fresh: false.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            method: {
+              type: 'string',
+              enum: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+              description: 'HTTP method. Default GET.',
+            },
+            path: {
+              type: 'string',
+              description:
+                'Path under /api/v1/admin, e.g. /machines, /machines/:id/debug, /monitor',
+            },
+            query: {
+              type: 'object',
+              additionalProperties: true,
+              description: 'Query string fields',
+            },
+            body: {
+              type: 'object',
+              additionalProperties: true,
+              description: 'JSON body for POST/PUT/PATCH',
+            },
+          },
+          required: ['path'],
+          additionalProperties: false,
+        },
       }
     );
   }
@@ -104,7 +164,7 @@ async function callTool(name, args = {}) {
       mgmt_key_configured: Boolean(cfg.mgmtKey),
       hint: [
         cfg.sessionToken || cfg.mgmtKey
-          ? 'Session or SCALATTICE_MGMT_KEY is set (credits + fleet tools).'
+          ? 'Session or SCALATTICE_MGMT_KEY is set (credits, fleet, admin tools).'
           : 'Run `scalattice login` (or set SCALATTICE_MGMT_KEY for MCP).',
         cfg.apiKey
           ? `export OPENAI_BASE_URL=${cfg.apiUrl}`
@@ -137,6 +197,20 @@ async function callTool(name, args = {}) {
     return mgmtFetch(cfg, `/api/v1/providers/machines/${machineId}/reconnect`, {
       method: 'POST',
       body: {},
+    });
+  }
+  if (name === 'scalattice_admin_catalog') {
+    return mgmtFetch(cfg, '/api/v1/admin/api');
+  }
+  if (name === 'scalattice_admin') {
+    const method = String(args.method || 'GET').trim().toUpperCase();
+    if (!['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+      throw new Error('method must be GET, POST, PUT, PATCH, or DELETE');
+    }
+    const path = withQuery(adminApiPath(args.path), args.query);
+    return mgmtFetch(cfg, path, {
+      method,
+      body: method === 'GET' || method === 'DELETE' ? undefined : args.body || {},
     });
   }
   throw new Error(`Unknown tool: ${name}`);

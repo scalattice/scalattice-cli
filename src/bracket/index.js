@@ -12,10 +12,10 @@ import {
   revokeBracketKey,
   rollBracketKey,
 } from './key.js';
-import { listModelIds } from './client.js';
+import { listModels } from './client.js';
 import { runLoop } from './loop.js';
 import { createPermissions } from './permissions.js';
-import { buildSystemPrompt, compactMessages, pickDefaultModel } from './prompt.js';
+import { buildSystemPrompt, catalogContextTokens, compactMessages, pickDefaultModel } from './prompt.js';
 import { loadLastBracketModel, saveLastBracketModel } from '../config.js';
 import { loadLastSession, loadSession, saveSession, newChatId, listSessions, resolveSessionRef, deleteSession, formatSessionList, titleFromMessages } from './session.js';
 import { createToolRunner, TOOL_DEFS, toolSummary, toolsBlock } from './tools.js';
@@ -89,6 +89,7 @@ async function completeTurn({
   todos,
   maxTurns,
   settings,
+  catalog,
   ui,
   signal: outerSignal,
 }) {
@@ -108,7 +109,7 @@ async function completeTurn({
       runTool,
       maxTurns,
       stream,
-      settings,
+      settings: { ...(settings || {}), maxContextTokens: catalogContextTokens(catalog, model) },
       signal,
       onTurnStart: () => ui?.startAssistant?.(),
       onRetry: (msg) => ui?.note?.(msg),
@@ -171,12 +172,13 @@ export async function cmdBracket(opts = {}) {
   }
 
   const auth = await resolveBracketAuth();
-  let modelIds = [];
+  let catalog = [];
   try {
-    modelIds = await listModelIds({ apiUrl: auth.apiUrl, apiKey: auth.apiKey });
+    catalog = await listModels({ apiUrl: auth.apiUrl, apiKey: auth.apiKey });
   } catch {
     /* catalog optional */
   }
+  const modelIds = catalog.map((m) => m.id);
   let model = flags.model || pickDefaultModel(modelIds, loadLastBracketModel());
   if (model) saveLastBracketModel(model);
 
@@ -219,6 +221,7 @@ export async function cmdBracket(opts = {}) {
       todos,
       maxTurns,
       settings,
+      catalog,
     });
     saveSession({ id: chatId, title: chatTitle, createdAt: chatCreatedAt, cwd, model, messages });
     return;
@@ -550,6 +553,7 @@ export async function cmdBracket(opts = {}) {
         todos,
         maxTurns,
         settings,
+        catalog,
         ui,
         signal,
       });

@@ -97,7 +97,7 @@ function messageBlob(m) {
 }
 
 // Same ~3 chars/token as the router, plus tool schemas. Used to shrink
-// history before a 4096-token GPU window rejects the request.
+// history only when it would exceed the catalog (or overflow-retry) window.
 export function estimateTokens(messages, tools) {
   let n = 16;
   for (const m of messages || []) {
@@ -118,9 +118,32 @@ function clipMessage(m, maxChars) {
   return { ...m, content: `${m.content.slice(0, maxChars)}\n…` };
 }
 
-export const CONTEXT_SOFT_TOKENS = 2800;
+/** Catalog default for current text models when /v1/models is missing a window. */
+export const DEFAULT_MAX_CONTEXT_TOKENS = 32768;
+/** Matches chatCompletion max_tokens so prompt + completion stay inside n_ctx. */
+export const COMPLETION_RESERVE_TOKENS = 1024;
+export const TEMPLATE_SLACK_TOKENS = 256;
+/** Legacy 4k-class prompt budget; overflow retries still drop to this size. */
+export const CONTEXT_SOFT_TOKENS = 2816;
 
-export function fitMessagesForContext(messages, { budget = CONTEXT_SOFT_TOKENS, tools, keep = 8 } = {}) {
+export function contextPromptBudget(maxContextTokens) {
+  const nCtx = Math.max(1024, Number(maxContextTokens) || DEFAULT_MAX_CONTEXT_TOKENS);
+  return Math.max(512, nCtx - COMPLETION_RESERVE_TOKENS - TEMPLATE_SLACK_TOKENS);
+}
+
+export function catalogContextTokens(catalog, modelId) {
+  const id = String(modelId || '');
+  const rows = Array.isArray(catalog) ? catalog : [];
+  const hit = rows.find((m) => String(m?.id || m?.modelId || '') === id);
+  const n = Number(hit?.maxContextTokens ?? hit?.max_context_tokens ?? hit?.context_length);
+  if (Number.isFinite(n) && n >= 1024) return Math.floor(n);
+  return DEFAULT_MAX_CONTEXT_TOKENS;
+}
+
+export function fitMessagesForContext(
+  messages,
+  { budget = contextPromptBudget(DEFAULT_MAX_CONTEXT_TOKENS), tools, keep = 8 } = {}
+) {
   if (!Array.isArray(messages) || estimateTokens(messages, tools) <= budget) return messages;
   let out = messages.slice();
   let keepN = keep;

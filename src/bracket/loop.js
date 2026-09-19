@@ -1,5 +1,11 @@
 import { chatCompletion } from './client.js';
-import { fitMessagesForContext, isContextOverflowError } from './prompt.js';
+import {
+  CONTEXT_SOFT_TOKENS,
+  contextPromptBudget,
+  DEFAULT_MAX_CONTEXT_TOKENS,
+  fitMessagesForContext,
+  isContextOverflowError,
+} from './prompt.js';
 import { toolSummary } from './tools.js';
 import { parseFallbackToolCalls, stripRecoveredToolText } from './xmlTools.js';
 
@@ -59,6 +65,11 @@ export async function runLoop({
   let history = messages;
   const useStream = settings?.stream !== undefined ? settings.stream !== false : stream !== false;
   const thinkOn = settings?.thinking !== undefined ? settings.thinking !== false : true;
+  const nCtx = Number(settings?.maxContextTokens);
+  const promptBudget = contextPromptBudget(
+    Number.isFinite(nCtx) && nCtx >= 1024 ? nCtx : DEFAULT_MAX_CONTEXT_TOKENS
+  );
+  const overflowBudget = Math.min(promptBudget, CONTEXT_SOFT_TOKENS);
 
   const complete = (think) =>
     chatCompletion({
@@ -75,15 +86,11 @@ export async function runLoop({
     });
 
   const shrink = (budget, keep) => {
-    const next = fitMessagesForContext(history, { budget, tools, keep });
-    if (next !== history && JSON.stringify(next) !== JSON.stringify(history)) {
-      onRetry?.('Shrinking earlier turns so they fit this model context window.');
-    }
-    history = next;
+    history = fitMessagesForContext(history, { budget, tools, keep });
   };
 
   for (let turn = 0; turn < maxTurns; turn += 1) {
-    shrink(2800, 8);
+    shrink(promptBudget, 8);
 
     onTurnStart?.();
     const lastRole = [...history].reverse().find((m) => m.role && m.role !== 'system')?.role;
@@ -94,7 +101,7 @@ export async function runLoop({
     } catch (err) {
       if (!isContextOverflowError(err)) throw err;
       onRetry?.('Request was larger than the model window. Compacting and retrying.');
-      shrink(2000, 4);
+      shrink(overflowBudget, 4);
       onTurnStart?.();
       assistant = withFallbackTools(await complete(false));
     }

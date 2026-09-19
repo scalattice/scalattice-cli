@@ -244,6 +244,33 @@ test('think splitter holds partial tags and splits reasoning', async () => {
   assert.deepEqual(s.pushThinking(' extra'), [{ type: 'thinking', text: ' extra' }]);
 });
 
+test('listModels keeps catalog context windows', async () => {
+  const { listModelIds, listModels } = await import('./client.js');
+  const orig = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        data: [
+          { id: 'qwen-3-coder-30b-a3b', max_context_tokens: 32768 },
+          { id: 'skip-me' },
+        ],
+      }),
+      { status: 200, headers: { 'content-type': 'application/json' } }
+    );
+  try {
+    assert.deepEqual(await listModels({ apiUrl: 'https://api.example', apiKey: 'k' }), [
+      { id: 'qwen-3-coder-30b-a3b', maxContextTokens: 32768 },
+      { id: 'skip-me', maxContextTokens: 0 },
+    ]);
+    assert.deepEqual(await listModelIds({ apiUrl: 'https://api.example', apiKey: 'k' }), [
+      'qwen-3-coder-30b-a3b',
+      'skip-me',
+    ]);
+  } finally {
+    globalThis.fetch = orig;
+  }
+});
+
 test('inferenceUrl does not double /v1', async () => {
   const { inferenceUrl } = await import('./client.js');
   assert.equal(
@@ -524,6 +551,60 @@ test('fitMessagesForContext drops early turns before the GPU window fills', asyn
     ),
     true
   );
+});
+
+test('fitMessagesForContext leaves a mid-size chat alone on a 32k catalog window', async () => {
+  const { catalogContextTokens, contextPromptBudget, fitMessagesForContext } = await import('./prompt.js');
+  assert.equal(
+    catalogContextTokens([{ id: 'qwen-3-coder-30b-a3b', maxContextTokens: 32768 }], 'qwen-3-coder-30b-a3b'),
+    32768
+  );
+  const messages = [
+    { role: 'system', content: 'sys' },
+    { role: 'user', content: 'tell me about your favourite science novel' },
+    { role: 'assistant', content: 'x'.repeat(6000) },
+    { role: 'user', content: 'find me the live pricing data for scalattice.com' },
+  ];
+  const budget = contextPromptBudget(32768);
+  const fitted = fitMessagesForContext(messages, { budget, keep: 8 });
+  assert.equal(fitted, messages);
+});
+
+test('runLoop does not pre-shrink a mid-size chat against a 32k catalog window', async () => {
+  const { runLoop } = await import('./loop.js');
+  const orig = globalThis.fetch;
+  let captured;
+  globalThis.fetch = async (_url, opts) => {
+    captured = JSON.parse(opts.body);
+    const sse = [
+      `data: ${JSON.stringify({ choices: [{ delta: { content: 'ok' } }] })}`,
+      'data: [DONE]',
+      '',
+    ].join('\n');
+    return new Response(sse, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+  };
+  try {
+    const notes = [];
+    const essay = `old essay ${'x'.repeat(6000)}`;
+    await runLoop({
+      apiUrl: 'https://api.example/v1',
+      apiKey: 'k',
+      model: 'qwen-3-coder-30b-a3b',
+      settings: { maxContextTokens: 32768, thinking: false },
+      messages: [
+        { role: 'system', content: 'sys' },
+        { role: 'user', content: essay },
+        { role: 'assistant', content: 'y'.repeat(4000) },
+        { role: 'user', content: 'find me the live pricing data for scalattice.com' },
+      ],
+      onRetry: (m) => notes.push(m),
+    });
+    assert.equal(notes.length, 0);
+    assert.equal(captured.messages[1].content, essay);
+    assert.match(captured.messages.at(-1).content, /live pricing data/);
+  } finally {
+    globalThis.fetch = orig;
+  }
 });
 
 test('runLoop compacts and retries when the API rejects an oversize prompt', async () => {
