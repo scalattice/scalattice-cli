@@ -9,7 +9,18 @@ const KNOWN_TOOLS = new Set([
   'todo_write',
   'web_search',
   'web_fetch',
+  'git_diff',
+  'diagnostics',
+  'await_shell',
+  'list_shells',
+  'kill_shell',
+  'delegate',
 ]);
+
+function isKnownTool(name) {
+  const n = String(name || '').trim();
+  return KNOWN_TOOLS.has(n) || n.startsWith('mcp__') || n.startsWith('mcp_');
+}
 
 function parseArgsJson(raw) {
   const text = String(raw || '').trim();
@@ -54,7 +65,7 @@ function callFromObject(obj, index) {
   }
   if (typeof args === 'string') args = parseArgsJson(args);
   name = String(name || '').trim();
-  if (!name || !KNOWN_TOOLS.has(name)) return null;
+  if (!name || !isKnownTool(name)) return null;
   if (!args || typeof args !== 'object' || Array.isArray(args)) args = {};
   return makeCall(name, args, index);
 }
@@ -154,7 +165,7 @@ export function parseFallbackToolCalls(content) {
       args[k[1].trim()] = k[2].trim();
     }
     const name = inner.split('\n')[0].trim().replace(/[<>]/g, '');
-    if (name && KNOWN_TOOLS.has(name)) add(makeCall(name, args, calls.length));
+    if (name && isKnownTool(name)) add(makeCall(name, args, calls.length));
   }
 
   for (const obj of extractJsonObjects(text)) {

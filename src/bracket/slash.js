@@ -14,6 +14,10 @@ const ALIAS = {
   renamechat: 'rename',
   delete: 'forget',
   rm: 'forget',
+  auto: 'mode',
+  plan: 'mode',
+  ask: 'mode',
+  agent: 'mode',
 };
 
 export const SLASH = {
@@ -78,12 +82,15 @@ export const SLASH = {
     detail: 'Keeps recent messages and a short summary of the rest.',
   },
   model: {
-    usage: '/model [id]',
-    summary: 'Show catalog models, or switch to one',
+    usage: '/model [id|auto]',
+    summary: 'Pin a catalog model, or auto-pick each turn',
     detail:
       'No argument lists ids the inference API returned.\n' +
-      'Pass an id to use it for the next turn: /model qwen-3-8b\n' +
-      'Bracket remembers the last model for new chats and the next launch.',
+      '/model auto (default): an advisor (the smallest chat model in the catalog) classifies\n' +
+      'talk vs create and picks a model for that message. Greetings use a small chat model;\n' +
+      'edits prefer a coder if the catalog has one.\n' +
+      'Pass an id to pin it: /model qwen-3-32b\n' +
+      'Pinned models stay until you /model auto again.',
   },
   yolo: {
     usage: '/yolo [on|off]',
@@ -126,7 +133,8 @@ export const SLASH = {
     detail:
       'Stream, thinking, region, vet, and security, each with its current value\n' +
       'and a short explanation. Change them with the matching slash command.\n' +
-      'The banner line is a compact reminder of the same five fields.',
+      'Includes /model auto and /mode auto|ask|plan|agent.\n' +
+      'The banner line is a compact reminder of the same fields.',
   },
   stream: {
     usage: '/stream [on|off]',
@@ -175,7 +183,52 @@ export const SLASH = {
   tools: {
     usage: '/tools',
     summary: 'List tools the model can call',
-    detail: 'Shows bash, read_file, edit_file, web_search, web_fetch, and the rest. Ask in the chat; Bracket runs them.',
+    detail: 'Shows bash, read_file, edit_file, web_search, git_diff, diagnostics, MCP tools, and the rest. Ask in the chat; Bracket runs them.',
+  },
+  mode: {
+    usage: '/mode [auto|ask|plan|agent]',
+    summary: 'How this chat may use tools (default auto)',
+    detail:
+      'auto   advisor picks ask vs plan vs agent each turn (default)\n' +
+      'ask    answer only, no tools\n' +
+      'plan   read-only tools; propose a plan. Say yes in the chat to execute\n' +
+      'agent  full tools: edits and shell\n' +
+      'Bare /mode shows this help and the current value.\n' +
+      '/ask /plan /agent /auto still work as shortcuts.',
+  },
+  router: {
+    usage: '/router [on|off]',
+    summary: 'Per-turn advisor for model, tools, and files (default on)',
+    detail:
+      'On (default): the smallest chat model in the live catalog advises each turn.\n' +
+      'It classifies talk vs create, then picks a model, tools, and a few files.\n' +
+      '/model auto lets that pick change the main model. /model ID pins the main model.\n' +
+      'Off: current model and the full tool list. Bare /router toggles.',
+  },
+  rewind: {
+    usage: '/rewind',
+    summary: 'Undo the last file edits in this chat',
+    detail: 'Restores files from the last write_file/edit_file checkpoint. /checkpoints lists them.',
+  },
+  checkpoints: {
+    usage: '/checkpoints',
+    summary: 'List file rewind points for this chat',
+    detail: 'Each write or edit snapshots the previous contents. /rewind pops the latest.',
+  },
+  mcp: {
+    usage: '/mcp',
+    summary: 'MCP servers Bracket can call (client)',
+    detail:
+      'This is a client: Bracket talks to other MCP servers from ~/.config/scalattice/mcp.json\n' +
+      'or .scalattice/mcp.json (Claude mcpServers shape).\n' +
+      '`scalattice mcp` is the opposite — it exposes Scalattice credits/fleet as a server.',
+  },
+  skills: {
+    usage: '/skills',
+    summary: 'List project and user skills',
+    detail:
+      'Markdown files in .scalattice/skills/ and ~/.config/scalattice/skills/.\n' +
+      'The advisor may attach a matching skill to the main model.',
   },
 };
 
@@ -200,8 +253,14 @@ function currentValue(name, settings = {}) {
       return String(s.stream === false ? s.vet || 1 : 1);
     case 'security':
       return s.stream === false ? s.security || 'tier1' : 'tier1';
+    case 'model':
+      return s.modelPinned ? s.model || 'pinned' : 'auto';
     case 'yolo':
       return s.yolo ? 'on' : 'off';
+    case 'router':
+      return s.router === false ? 'off' : 'on';
+    case 'mode':
+      return s.modePinned ? s.agentMode || 'agent' : 'auto';
     case 'provider':
       return s.provider || s.providerId || 'scalattice';
     default:
@@ -257,6 +316,13 @@ export function settingsBlock(settings = {}) {
       stream ? 'tier1' : s.security || 'tier1',
       'tier1 standard. tier2.5 stricter; turns streaming off.',
     ],
+    ['Router', s.router === false ? 'off' : 'on', 'Advisor (smallest chat in the catalog) may pick tools/files.'],
+    [
+      'Model',
+      s.modelPinned ? 'pin' : 'auto',
+      'auto: pick a catalog model each turn (talk vs create). /model ID pins.',
+    ],
+    ['Mode', s.modePinned ? s.agentMode || 'agent' : 'auto', 'auto: advisor picks. ask / plan / agent pin. /mode auto to unpin.'],
   ];
   const titleW = Math.max(...rows.map((r) => r[0].length));
   const valueW = Math.max(...rows.map((r) => String(r[1]).length));
@@ -268,7 +334,7 @@ export function settingsBlock(settings = {}) {
         `${title.padEnd(titleW)}  ${String(value).padEnd(valueW)}  ${blurb}`
     ),
     '',
-    'Change with /stream /think /region /vet /security.  /help stream for one.',
+    'Change with /stream /think /region /vet /security /router /mode.  /help stream for one.',
   ].join('\n');
 }
 
@@ -301,6 +367,7 @@ function argCandidates(cmd, ctx, after = '') {
     case 'stream':
     case 'think':
     case 'yolo':
+    case 'router':
       return ['on', 'off'];
     case 'region':
       return ['auto', 'us', 'eu', 'ap'];
@@ -327,8 +394,10 @@ function argCandidates(cmd, ctx, after = '') {
         ...(ctx.providers || []).map(String),
       ];
     }
+    case 'mode':
+      return ['auto', 'ask', 'plan', 'agent'];
     case 'model':
-      return (ctx.models || []).map(String);
+      return ['auto', ...(ctx.models || []).map(String)];
     case 'chat':
     case 'forget':
       return (ctx.chats || []).flatMap((row, i) =>

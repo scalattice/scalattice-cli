@@ -34,6 +34,8 @@ test('scalattice bracket --help names Bracket', () => {
   assert.match(r.stdout, /--yolo/);
   assert.match(r.stdout, /--stream/);
   assert.match(r.stdout, /--think/);
+  assert.match(r.stdout, /--router/);
+  assert.match(r.stdout, /\/mode/);
   assert.match(r.stdout, /--region/);
   assert.match(r.stdout, /\/help \[command\]/);
   assert.match(r.stdout, /\/chats/);

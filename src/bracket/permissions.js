@@ -8,6 +8,10 @@ const READ_TOOLS = new Set([
   'todo_write',
   'web_search',
   'web_fetch',
+  'git_diff',
+  'diagnostics',
+  'await_shell',
+  'list_shells',
 ]);
 
 export function createPermissions({ yolo = false, interactive = true, ask } = {}) {

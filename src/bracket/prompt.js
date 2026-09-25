@@ -16,8 +16,14 @@ export function pickDefaultModel(ids, remembered) {
   return list[0] || DEFAULT_MODEL;
 }
 
-export function buildSystemPrompt({ cwd, model, yolo }) {
+export function buildSystemPrompt({ cwd, model, yolo, mode = 'agent', memory = '' }) {
   const today = new Date().toISOString().slice(0, 10);
+  const modeLine =
+    mode === 'ask'
+      ? 'Mode: ask — answer only. Do not call tools or edit files.'
+      : mode === 'plan'
+        ? 'Mode: plan — read-only tools. Propose a plan; do not write files. If the user approves in chat (yes, do this, go ahead), the next turn will execute; do not wait for a slash command.'
+        : 'Mode: agent — you may edit files and run commands.';
 
   return `You are Scalattice Bracket, a coding harness in the Scalattice CLI. You help the user with software engineering in this workspace.
 
@@ -25,12 +31,14 @@ Workspace: ${cwd}
 Platform: ${os.platform()} ${os.release()} (${os.arch()})
 Date: ${today}
 Model: ${model}
+${modeLine}
 Unattended (yolo): ${yolo ? 'yes: do not ask the user to run commands; use tools' : 'no: tools that write or run a shell may require approval'}
 
 # How you work
 - Prefer tools. Do not guess file contents. Use glob, list_dir, and grep, then read_file with offset/limit. Never paste a whole repo or a huge file into one turn.
 - After a tool result, call the next tool or give the user the result. Do not stop at a plan.
 - Use web_search and web_fetch for the public web. Do not pretend you cannot go online.
+- git_diff for local changes. diagnostics for tsc/eslint when those configs exist. bash with background:true for long jobs.
 - No extra comments, docs, refactors, commits, or pushes unless asked.
 - After edits, run tests or typecheck when you reasonably can.
 - Write replies in Markdown: headings, lists, fenced code, **bold**, *italic*, \`code\`, and --- rules.
@@ -40,7 +48,7 @@ ${companyPrompt()}
 
 # Tools
 ${toolsPrompt()}
-`;
+${memory ? `\n# Project memory\n${memory}\n` : ''}`;
 }
 
 export function compactMessages(messages, { keep = 12 } = {}) {
