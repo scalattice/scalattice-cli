@@ -46,13 +46,45 @@ export function defaultSettings(flags = {}, env = process.env) {
   const vet = vetOf(flags.vet ?? env.SCALATTICE_VET_REPLICAS, 1);
   const security = securityOf(flags.security || env.SCALATTICE_SECURITY, 'tier1');
 
-  const seed = { stream, thinking, region, vet, security };
+  const seed = {
+    stream,
+    thinking,
+    region,
+    vet,
+    security,
+    router: true,
+    agentMode: 'agent',
+    modelPinned: Boolean(flags.model) && String(flags.model).toLowerCase() !== 'auto',
+    modePinned: false,
+  };
   const patch = { thinking, region };
   if (flags.noStream || falsey(env.SCALATTICE_STREAM)) patch.stream = false;
   if (flags.stream === true || truthy(env.SCALATTICE_STREAM)) patch.stream = true;
   if (flags.noStream) patch.stream = false;
   if (flags.vet != null || env.SCALATTICE_VET_REPLICAS) patch.vet = vet;
   if (flags.security || env.SCALATTICE_SECURITY) patch.security = security;
+  if (falsey(env.SCALATTICE_BRACKET_ROUTER) || flags.noRouter) patch.router = false;
+  if (flags.router === true || truthy(env.SCALATTICE_BRACKET_ROUTER)) patch.router = true;
+  if (flags.noRouter) patch.router = false;
+  if (flags.model && String(flags.model).toLowerCase() !== 'auto') patch.modelPinned = true;
+  if (flags.plan) {
+    patch.agentMode = 'plan';
+    patch.modePinned = true;
+  }
+  if (flags.ask) {
+    patch.agentMode = 'ask';
+    patch.modePinned = true;
+  }
+  if (flags.agent) {
+    patch.agentMode = 'agent';
+    patch.modePinned = true;
+  }
+  const modeFlag = String(flags.mode || '').trim().toLowerCase();
+  if (modeFlag === 'auto') patch.modePinned = false;
+  if (modeFlag === 'ask' || modeFlag === 'plan' || modeFlag === 'agent') {
+    patch.agentMode = modeFlag;
+    patch.modePinned = true;
+  }
   return patchSettings(seed, patch);
 }
 
@@ -75,6 +107,10 @@ export function patchSettings(current, patch) {
   next.security = securityOf(next.security, 'tier1');
   next.stream = next.stream !== false;
   next.thinking = next.thinking !== false;
+  next.router = next.router !== false;
+  next.agentMode = ['ask', 'plan', 'agent'].includes(next.agentMode) ? next.agentMode : 'agent';
+  next.modelPinned = Boolean(next.modelPinned);
+  next.modePinned = Boolean(next.modePinned);
   return next;
 }
 
@@ -97,6 +133,8 @@ export function settingsLine(settings) {
       `provider ${s.providerId}`,
       `stream ${stream ? 'on' : 'off'}`,
       `think ${s.thinking === false ? 'off' : 'on'}`,
+      `model ${s.modelPinned ? 'pin' : 'auto'}`,
+      `mode ${s.modePinned ? s.agentMode || 'agent' : 'auto'}`,
     ].join(' · ');
   }
   return [
@@ -105,6 +143,8 @@ export function settingsLine(settings) {
     `region ${regionOf(s.region, 'auto')}`,
     `vet ${stream ? 1 : vetOf(s.vet, 1)}`,
     `security ${stream ? 'tier1' : securityOf(s.security, 'tier1')}`,
+    `model ${s.modelPinned ? 'pin' : 'auto'}`,
+    `mode ${s.modePinned ? s.agentMode || 'agent' : 'auto'}`,
   ].join(' · ');
 }
 
@@ -114,4 +154,11 @@ export function parseBoolArg(arg, current) {
   if (['on', 'true', '1', 'yes'].includes(v)) return true;
   if (['off', 'false', '0', 'no'].includes(v)) return false;
   throw new Error('Use on or off');
+}
+
+/** Banner label: pinned id, or auto until a turn actually picks. */
+export function formatModelLabel({ pinned, model, routed } = {}) {
+  if (pinned) return String(model || '').trim();
+  const pick = String(routed || '').trim();
+  return pick ? `auto → ${pick}` : 'auto';
 }

@@ -207,6 +207,11 @@ function parseArgs(argv) {
     else if (a === '--region') flags.region = argv[++i];
     else if (a === '--vet') flags.vet = Number(argv[++i]);
     else if (a === '--security') flags.security = argv[++i];
+    else if (a === '--router') flags.router = true;
+    else if (a === '--no-router') flags.noRouter = true;
+    else if (a === '--plan') flags.plan = true;
+    else if (a === '--ask') flags.ask = true;
+    else if (a === '--agent') flags.agent = true;
     else if (a === '--no-update') flags.noUpdate = true;
     else if (a === '--check') flags.check = true;
     else if (a === '--url') flags.url = argv[++i];

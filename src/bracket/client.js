@@ -113,7 +113,7 @@ function ingestToolCalls(toolAcc, tcs) {
   }
 }
 
-async function readSse(res, { onDelta, signal } = {}) {
+async function readSse(res, { onDelta, signal, maxTokens = 2048 } = {}) {
   const reader = res.body.getReader();
   const dec = new TextDecoder();
   let buf = '';
@@ -126,6 +126,7 @@ async function readSse(res, { onDelta, signal } = {}) {
   let sawReasoningDelta = false;
   let lastMessage = null;
   let finishReason = null;
+  let completionTokens = 0;
 
   const takeParts = (parts) => {
     for (const part of parts) {
@@ -162,6 +163,8 @@ async function readSse(res, { onDelta, signal } = {}) {
     }
     if (delta.tool_calls?.length) ingestToolCalls(toolAcc, delta.tool_calls);
     if (choice.finish_reason) finishReason = choice.finish_reason;
+    const used = Number(json.usage?.completion_tokens);
+    if (Number.isFinite(used) && used > 0) completionTokens = used;
   };
 
   const onAbort = () => {
@@ -202,6 +205,10 @@ async function readSse(res, { onDelta, signal } = {}) {
     const tool_calls = [...toolAcc.values()].filter((t) => t.function.name);
     if (!content && !tool_calls.length && !reasoning && !sawDone) {
       throw new Error('empty stream');
+    }
+    const cap = Math.max(1, Number(maxTokens) || 2048);
+    if (completionTokens >= cap - 8 && (!finishReason || finishReason === 'stop')) {
+      finishReason = 'length';
     }
     const msg = { role: 'assistant', content: content || null };
     if (tool_calls.length) msg.tool_calls = tool_calls;
@@ -259,7 +266,7 @@ export async function chatCompletion({
     throw new Error(describeHttpError(res.status, url, t));
   }
   if (useStream && res.body) {
-    return readSse(res, { onDelta, signal });
+    return readSse(res, { onDelta, signal, maxTokens: max_tokens });
   }
   const json = await res.json();
   if (json.error) throw new Error(json.error.message || JSON.stringify(json.error));
@@ -283,6 +290,11 @@ export async function chatCompletion({
   if (reasoning) out.reasoning_content = reasoning;
   const fr = json.choices?.[0]?.finish_reason;
   if (fr) out.finish_reason = fr;
+  const used = Number(json.usage?.completion_tokens);
+  const cap = Math.max(1, Number(max_tokens) || 2048);
+  if (Number.isFinite(used) && used >= cap - 8 && (!out.finish_reason || out.finish_reason === 'stop')) {
+    out.finish_reason = 'length';
+  }
   return out;
 }
 

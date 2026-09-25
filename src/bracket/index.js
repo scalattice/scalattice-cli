@@ -36,9 +36,16 @@ import { createPermissions } from './permissions.js';
 import { buildSystemPrompt, catalogContextTokens, compactMessages, pickDefaultModel } from './prompt.js';
 import { loadLastBracketModel, saveLastBracketModel } from '../config.js';
 import { loadLastSession, loadSession, saveSession, newChatId, listSessions, resolveSessionRef, deleteSession, formatSessionList, titleFromMessages } from './session.js';
+import { createBackgroundShells } from './background.js';
+import { createCheckpointStore } from './checkpoint.js';
+import { runHooks } from './hooks.js';
+import { createMcpPool } from './mcpClient.js';
+import { loadSkills, skillsCatalog } from './skills.js';
 import { createToolRunner, TOOL_DEFS, toolSummary, toolsBlock } from './tools.js';
+import { prepareBracketTurn } from './turn.js';
 import { createTui } from './tui.js';
-import { defaultSettings, parseBoolArg, patchSettings, settingsLine } from './settings.js';
+import { looksLikePlanApproval } from './router.js';
+import { defaultSettings, formatModelLabel, parseBoolArg, patchSettings, settingsLine } from './settings.js';
 import { settingNote, settingsBlock, slashHelp, canonSlash, completeSlash } from './slash.js';
 
 export const BRACKET_HELP = `scalattice bracket: coding harness (reads/edits files, runs commands)
@@ -69,6 +76,10 @@ Flags:
       SSE streaming (default on). Streaming needs vet 1 and tier1.
   --think / --no-think
       Request model thinking on the last user turn (default on)
+  --router / --no-router
+      Per-turn advisor (default on). Picks model, tools, and files from the catalog.
+  --mode auto|ask|plan|agent
+      How tools work (default auto). --plan / --ask / --agent still pin those.
   --region auto|us|eu|ap
       X-Scalattice-Region (default auto)
   --vet 1|2|3
@@ -84,7 +95,7 @@ Inside Bracket:
   /settings           labeled stream / think / region / vet / security
   /stream /think /region /vet /security /model /yolo /credits /whoami /provider
   /chats /chat /new /rename /forget /clear /compact /exit
-  /tools
+  /mode /router /rewind /checkpoints /mcp /skills /tools
   Tab completes commands, flags, models, and chats.
 
 Auth: sign in (session). Bracket then mints a developer inference key (slt_…).
@@ -111,25 +122,99 @@ async function completeTurn({
   settings,
   catalog,
   ui,
+  mcp,
+  checkpoints,
+  backgrounds,
   signal: outerSignal,
 }) {
   const ac = new AbortController();
   const signal = outerSignal || ac.signal;
   const onSig = () => ac.abort();
   if (!ui) process.once('SIGINT', onSig);
-  const runTool = createToolRunner({ cwd, permissions, todos, signal });
+  const extraTools = mcp?.tools?.() || [];
+  const prepared = await prepareBracketTurn({
+    messages,
+    model,
+    auth,
+    cwd,
+    settings,
+    catalog,
+    extraTools,
+    yolo: permissions?.yolo,
+    signal,
+    onNote: (msg) => ui?.note?.(msg),
+  });
+  const hookNote = await runHooks('UserPromptSubmit', { cwd, signal });
+  if (hookNote) ui?.note?.(hookNote);
+
+  const runTool = createToolRunner({
+    cwd,
+    permissions,
+    todos,
+    signal,
+    checkpoints,
+    backgrounds,
+    mcp,
+    runDelegate: async (args) => {
+      const subModel = String(args.model || prepared.model || model).trim();
+      const subTools = TOOL_DEFS.filter((t) => t.function?.name !== 'delegate');
+      const subRun = createToolRunner({
+        cwd,
+        permissions,
+        todos,
+        signal,
+        checkpoints,
+        backgrounds,
+        mcp,
+      });
+      const out = await runLoop({
+        messages: [
+          {
+            role: 'system',
+            content: buildSystemPrompt({
+              cwd,
+              model: subModel,
+              yolo: permissions?.yolo,
+              mode: 'agent',
+            }),
+          },
+          { role: 'user', content: String(args.task || '') },
+        ],
+        tools: subTools,
+        model: subModel,
+        apiUrl: auth.apiUrl,
+        apiKey: auth.apiKey,
+        runTool: subRun,
+        maxTurns: 12,
+        stream: false,
+        settings: {
+          ...(settings || {}),
+          stream: false,
+          thinking: false,
+          maxContextTokens: catalogContextTokens(catalog, subModel),
+        },
+        signal,
+      });
+      const last = [...(out.messages || [])].reverse().find((m) => m.role === 'assistant');
+      return String(last?.content || '(sub-agent finished with no text)');
+    },
+  });
   const stream = settings?.stream !== false;
   try {
     const result = await runLoop({
-      messages,
-      tools: TOOL_DEFS,
-      model,
+      messages: prepared.messages,
+      tools: prepared.tools,
+      model: prepared.model,
       apiUrl: auth.apiUrl,
       apiKey: auth.apiKey,
       runTool,
       maxTurns,
       stream,
-      settings: { ...(settings || {}), maxContextTokens: catalogContextTokens(catalog, model) },
+      settings: {
+        ...(settings || {}),
+        thinking: settings?.thinking !== false && prepared.thinking,
+        maxContextTokens: catalogContextTokens(catalog, prepared.model),
+      },
       signal,
       onTurnStart: () => ui?.startAssistant?.(),
       onRetry: (msg) => ui?.note?.(msg),
@@ -154,7 +239,7 @@ async function completeTurn({
           if (assistant.tool_calls?.length) ui.replaceAssistant(assistant.content || '');
           ui.endAssistant();
           if (assistant.finish_reason === 'length') {
-            ui.note('Stopped: hit the token limit. Ask it to continue, or /think off.');
+            ui.note('Stopped: hit the 2048-token reply cap (not the context window). Ask it to continue.');
           }
         } else if (stream && assistant.content) process.stdout.write('\n');
         if (!ui && !stream && assistant.content) print(assistant.content);
@@ -164,7 +249,7 @@ async function completeTurn({
           }
         }
         if (!ui && assistant.finish_reason === 'length') {
-          print('Stopped: hit the token limit.');
+          print('Stopped: hit the 2048-token reply cap (not the context window).');
         }
       },
     });
@@ -178,7 +263,7 @@ async function completeTurn({
       if (ui) ui.note(msg);
       else print(msg);
     }
-    return result.messages;
+    return { messages: result.messages, model: prepared.model, route: prepared.route };
   } finally {
     if (!ui) process.removeListener('SIGINT', onSig);
   }
@@ -209,17 +294,27 @@ export async function cmdBracket(opts = {}) {
   }
   let modelIds = catalog.map((m) => m.id);
   let model =
-    flags.model || pickDefaultModel(modelIds, getActiveProvider().model || loadLastBracketModel());
-  if (model) {
+    (flags.model && String(flags.model).toLowerCase() !== 'auto' ? flags.model : '') ||
+    pickDefaultModel(modelIds, getActiveProvider().model || loadLastBracketModel());
+  let routedModel = '';
+  if (settings.modelPinned && model) {
     saveLastBracketModel(model);
     setActiveProviderModel(model);
   }
 
   const todos = [];
+  const mcp = createMcpPool({ cwd });
+  const backgrounds = createBackgroundShells();
+  try {
+    await mcp.start();
+  } catch {
+    /* MCP optional */
+  }
   let messages;
   let chatId;
   let chatTitle;
   let chatCreatedAt;
+  let checkpoints;
 
   if (flags.continue) {
     const prev = loadLastSession(cwd);
@@ -228,16 +323,22 @@ export async function cmdBracket(opts = {}) {
     chatId = prev.id || newChatId();
     chatTitle = prev.title || titleFromMessages(prev.messages);
     chatCreatedAt = prev.createdAt;
+    checkpoints = createCheckpointStore({ cwd, chatId });
     if (prev.model && !flags.model) {
       model = prev.model;
-      saveLastBracketModel(model);
-      setActiveProviderModel(model);
+      if (settings.modelPinned) {
+        saveLastBracketModel(model);
+        setActiveProviderModel(model);
+      } else {
+        routedModel = prev.model;
+      }
     }
   } else {
     chatId = newChatId();
     chatTitle = 'New chat';
     chatCreatedAt = undefined;
     messages = [{ role: 'system', content: buildSystemPrompt({ cwd, model, yolo }) }];
+    checkpoints = createCheckpointStore({ cwd, chatId });
   }
 
   const hasUserTurns = (msgs) => (msgs || []).some((m) => m?.role === 'user');
@@ -246,18 +347,27 @@ export async function cmdBracket(opts = {}) {
     const permissions = createPermissions({ yolo, interactive: false });
     if (!promptText) throw new Error('Pass a prompt, or run `scalattice bracket` in a terminal.');
     messages.push({ role: 'user', content: promptText });
-    messages = await completeTurn({
-      messages,
-      model,
-      auth,
-      cwd,
-      permissions,
-      todos,
-      maxTurns,
-      settings,
-      catalog,
-    });
-    saveSession({ id: chatId, title: chatTitle, createdAt: chatCreatedAt, cwd, model, messages });
+    try {
+      const out = await completeTurn({
+        messages,
+        model,
+        auth,
+        cwd,
+        permissions,
+        todos,
+        maxTurns,
+        settings,
+        catalog,
+        mcp,
+        checkpoints,
+        backgrounds,
+      });
+      messages = out.messages;
+      if (out.model && !settings.modelPinned) model = out.model;
+      saveSession({ id: chatId, title: chatTitle, createdAt: chatCreatedAt, cwd, model, messages });
+    } finally {
+      mcp.stop();
+    }
     return;
   }
 
@@ -289,13 +399,19 @@ export async function cmdBracket(opts = {}) {
     chatId = saved.id;
     chatTitle = saved.title;
     chatCreatedAt = saved.createdAt;
-    saveLastBracketModel(model);
-    setActiveProviderModel(model);
+    if (settings.modelPinned) {
+      saveLastBracketModel(model);
+      setActiveProviderModel(model);
+    }
     syncHeader();
   };
   let billing = null;
   const headerBits = () => ({
-    model,
+    model: formatModelLabel({
+      pinned: settings.modelPinned,
+      model,
+      routed: routedModel,
+    }),
     provider: auth.providerName || getActiveProvider().name,
     yolo: permissions.yolo,
     policy: settingsLine(settings),
@@ -314,6 +430,8 @@ export async function cmdBracket(opts = {}) {
     chatTitle = 'New chat';
     chatCreatedAt = undefined;
     messages = [{ role: 'system', content: buildSystemPrompt({ cwd, model, yolo: permissions.yolo }) }];
+    checkpoints = createCheckpointStore({ cwd, chatId });
+    routedModel = '';
     ui.clearTranscript();
     syncHeader();
     ui.note(note);
@@ -327,9 +445,11 @@ export async function cmdBracket(opts = {}) {
     messages = rec.messages || [{ role: 'system', content: buildSystemPrompt({ cwd, model, yolo: permissions.yolo }) }];
     if (rec.model && !flags.model) {
       model = rec.model;
-      saveLastBracketModel(model);
+      if (settings.modelPinned) saveLastBracketModel(model);
+      else routedModel = rec.model;
     }
     saveSession({ ...rec, id: chatId, title: chatTitle, cwd: rec.cwd || cwd, model, messages });
+    checkpoints = createCheckpointStore({ cwd, chatId });
     ui.replay(messages);
     syncHeader();
     ui.note(`Opened ${chatTitle}`);
@@ -409,6 +529,8 @@ export async function cmdBracket(opts = {}) {
           chatTitle = 'New chat';
           chatCreatedAt = undefined;
           messages = [{ role: 'system', content: buildSystemPrompt({ cwd, model, yolo: permissions.yolo }) }];
+          checkpoints = createCheckpointStore({ cwd, chatId });
+          routedModel = '';
           ui.clearTranscript();
           syncHeader();
           ui.note(gone ? `Forgot ${title}.` : 'New chat.');
@@ -420,22 +542,36 @@ export async function cmdBracket(opts = {}) {
         return 'ok';
       }
       case 'tools':
-        ui.note(toolsBlock());
+        ui.note(toolsBlock(mcp.tools()));
         return 'ok';
       case 'compact':
         messages = compactMessages(messages, { keep: 10 });
         ui.note('Compacted earlier turns.');
         return 'save';
       case 'model':
+        if (arg === 'auto' || arg === 'unpin') {
+          settings = patchSettings(settings, { modelPinned: false, router: true });
+          routedModel = '';
+          syncHeader();
+          ui.note(
+            'Model auto: the advisor classifies talk vs create and picks a catalog model each turn.'
+          );
+          return 'ok';
+        }
         if (arg) {
           model = arg;
+          settings = patchSettings(settings, { modelPinned: true });
           saveLastBracketModel(model);
           setActiveProviderModel(model);
           syncHeader();
-          ui.note(`Model set to ${model}`);
+          ui.note(`Model pinned to ${model}`);
           return 'save';
         }
-        ui.note(modelIds.length ? modelIds.join(', ') : model);
+        ui.note(
+          `${modelIds.length ? modelIds.join(', ') : model}\nNow: ${
+            settings.modelPinned ? `${model} (pinned)` : routedModel ? `auto → ${routedModel}` : 'auto'
+          }`
+        );
         return 'ok';
       case 'yolo': {
         const next =
@@ -447,6 +583,88 @@ export async function cmdBracket(opts = {}) {
         permissions.setYolo(next);
         syncHeader();
         ui.note(next ? 'yolo on' : 'yolo off');
+        return 'ok';
+      }
+      case 'mode':
+      case 'plan':
+      case 'ask':
+      case 'agent':
+      case 'auto': {
+        const raw = String(rawCmd || '').toLowerCase();
+        const token =
+          raw === 'plan' || raw === 'ask' || raw === 'agent' || raw === 'auto'
+            ? raw
+            : String(arg || '').trim().toLowerCase();
+        if (!token) {
+          ui.note(slashHelp('mode', settings));
+          return 'ok';
+        }
+        if (token === 'auto') {
+          settings = patchSettings(settings, { modePinned: false, router: true });
+          syncHeader();
+          ui.note('Mode auto: advisor picks ask vs plan vs agent each turn.');
+          return 'ok';
+        }
+        if (token !== 'ask' && token !== 'plan' && token !== 'agent') {
+          ui.note(`Use /mode auto, ask, plan, or agent.\n\n${slashHelp('mode', settings)}`);
+          return 'ok';
+        }
+        settings = patchSettings(settings, { agentMode: token, modePinned: true });
+        syncHeader();
+        ui.note(
+          token === 'plan'
+            ? 'Mode plan: read-only tools. Say yes in the chat to execute.'
+            : token === 'ask'
+              ? 'Mode ask: no tools.'
+              : 'Mode agent: full tools.'
+        );
+        return 'ok';
+      }
+      case 'go':
+        settings = patchSettings(settings, { agentMode: 'agent', modePinned: true });
+        syncHeader();
+        return 'go';
+      case 'router':
+        try {
+          settings = patchSettings(settings, {
+            router: parseBoolArg(arg, settings.router !== false),
+          });
+          syncHeader();
+          ui.note(
+            settingNote(
+              'Router',
+              settings.router ? 'on' : 'off',
+              settings.router
+                ? 'The smallest chat model in the catalog advises each turn. /model auto lets it switch models.'
+                : 'Using the current model and the full tool list.'
+            ) + `\n\n${settingsBlock(settings)}`
+          );
+        } catch (err) {
+          ui.note(`${err?.message || String(err)}\n\n${slashHelp('router', settings)}`);
+        }
+        return 'ok';
+      case 'rewind': {
+        const rec = checkpoints?.rewind?.();
+        if (!rec?.ok) {
+          ui.note(rec?.error || 'No checkpoint to rewind.');
+          return 'ok';
+        }
+        ui.note(`Rewound ${rec.id}\n${(rec.restored || []).join('\n')}`);
+        return 'ok';
+      }
+      case 'checkpoints':
+        ui.note(checkpoints?.describe?.() || 'No checkpoints in this chat.');
+        return 'ok';
+      case 'mcp':
+        ui.note(mcp.describe());
+        return 'ok';
+      case 'skills': {
+        const list = loadSkills(cwd);
+        ui.note(
+          list.length
+            ? skillsCatalog(list)
+            : 'No skills. Add .scalattice/skills/*.md or ~/.config/scalattice/skills/.'
+        );
         return 'ok';
       }
       case 'credits':
@@ -685,9 +903,14 @@ export async function cmdBracket(opts = {}) {
   };
 
   const runUserTurn = async (text, signal) => {
+    if (settings.modePinned && settings.agentMode === 'plan' && looksLikePlanApproval(text)) {
+      settings = patchSettings(settings, { agentMode: 'agent', modePinned: true });
+      syncHeader();
+      ui.note('Executing the plan.');
+    }
     messages.push({ role: 'user', content: text });
     try {
-      messages = await completeTurn({
+      const out = await completeTurn({
         messages,
         model,
         auth,
@@ -698,8 +921,17 @@ export async function cmdBracket(opts = {}) {
         settings,
         catalog,
         ui,
+        mcp,
+        checkpoints,
+        backgrounds,
         signal,
       });
+      messages = out.messages;
+      if (out?.model && !settings.modelPinned) {
+        model = out.model;
+        routedModel = out.model;
+        syncHeader();
+      }
       return true;
     } catch (err) {
       const last = messages[messages.length - 1];
@@ -785,6 +1017,13 @@ export async function cmdBracket(opts = {}) {
           quitCli = true;
           break;
         }
+        if (act === 'go') {
+          persist();
+          const ok = await sendTurn('Execute the plan now. Make the edits. Do not only restate the plan.');
+          persist();
+          if (!ok) restore = '';
+          continue;
+        }
         if (act === 'save') persist();
         continue;
       }
@@ -797,6 +1036,7 @@ export async function cmdBracket(opts = {}) {
     process.removeListener('SIGTERM', onSigterm);
     persist();
     ui.leave();
+    mcp.stop();
   }
   if (quitCli) process.exit(0);
 }

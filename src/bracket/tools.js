@@ -2,6 +2,9 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { applyEdit } from './edit.js';
+import { runDiagnostics } from './diagnostics.js';
+import { runHooks } from './hooks.js';
+import { isMcpToolName } from './mcpClient.js';
 import { globToRegExp, looksBinary, resolveWorkspacePath, walkFiles } from './paths.js';
 import { webFetchTool, webSearchTool } from './web.js';
 
@@ -30,10 +33,11 @@ function fn(name, description, properties, required = []) {
 export const TOOL_DEFS = [
   fn(
     'bash',
-    'Run a shell command in the workspace. Use for git, tests, builds, and inspection. Quote paths with spaces.',
+    'Run a shell command in the workspace. Use for git, tests, builds, and inspection. Quote paths with spaces. Set background true for long jobs (tests, servers) and await_shell later.',
     {
       command: { type: 'string', description: 'Shell command to run' },
       timeout_ms: { type: 'integer', description: 'Kill after this many ms (default 120000)' },
+      background: { type: 'boolean', description: 'Start in the background and return a job id' },
     },
     ['command']
   ),
@@ -128,6 +132,52 @@ export const TOOL_DEFS = [
       url: { type: 'string', description: 'Full http(s) URL' },
     },
     ['url']
+  ),
+  fn(
+    'git_diff',
+    'Show git status and a unified diff for this workspace. Read-only.',
+    {
+      staged: { type: 'boolean', description: 'Show staged diff only' },
+      path: { type: 'string', description: 'Limit to one path' },
+    },
+    []
+  ),
+  fn(
+    'diagnostics',
+    'Run tsc --noEmit and eslint when this workspace has those configs.',
+    {},
+    []
+  ),
+  fn(
+    'await_shell',
+    'Read stdout/stderr from a background bash job (started with bash background:true).',
+    {
+      id: { type: 'string', description: 'Job id from bash, e.g. sh1' },
+    },
+    ['id']
+  ),
+  fn(
+    'list_shells',
+    'List background bash jobs started in this chat.',
+    {},
+    []
+  ),
+  fn(
+    'kill_shell',
+    'Send SIGTERM to a background bash job.',
+    {
+      id: { type: 'string' },
+    },
+    ['id']
+  ),
+  fn(
+    'delegate',
+    'Run a nested Bracket pass on a focused subtask. Use for parallel investigation. Do not nest further.',
+    {
+      task: { type: 'string', description: 'What the sub-agent should do' },
+      model: { type: 'string', description: 'Optional catalog model id' },
+    },
+    ['task']
   ),
 ];
 
@@ -352,7 +402,26 @@ function listDirTool(args, cwd) {
   return lines.length ? lines.join('\n') : '(empty)';
 }
 
-export function createToolRunner({ cwd, permissions, todos, signal } = {}) {
+function snapshotWrite(checkpoints, cwd, rel) {
+  if (!checkpoints?.snapshot || !rel) return;
+  try {
+    const { abs } = resolveWorkspacePath(cwd, rel);
+    checkpoints.snapshot([{ rel: String(rel), abs }]);
+  } catch {
+    /* ignore */
+  }
+}
+
+export function createToolRunner({
+  cwd,
+  permissions,
+  todos,
+  signal,
+  checkpoints,
+  backgrounds,
+  mcp,
+  runDelegate,
+} = {}) {
   return async function runTool(call) {
     const name = call.function?.name || call.name;
     const args = parseArgs(call.function?.arguments ?? call.arguments);
@@ -369,19 +438,28 @@ export function createToolRunner({ cwd, permissions, todos, signal } = {}) {
       if (signal?.aborted) throw interruptedError();
       if (!ok) return `Denied by user: ${name}`;
 
+      const hookPre = await runHooks('PreToolUse', { cwd, signal });
       let out;
       switch (name) {
         case 'bash':
           if (!args.command) throw new Error('command is required');
-          out = await runBash(args, cwd, signal);
+          if (args.background) {
+            if (!backgrounds?.start) throw new Error('Background shells are not available.');
+            const id = backgrounds.start(args.command, cwd, signal);
+            out = `Started background job ${id}. Use await_shell or list_shells.`;
+          } else {
+            out = await runBash(args, cwd, signal);
+          }
           break;
         case 'read_file':
           out = readFileTool(args, cwd);
           break;
         case 'write_file':
+          snapshotWrite(checkpoints, cwd, args.path);
           out = writeFileTool(args, cwd);
           break;
         case 'edit_file':
+          snapshotWrite(checkpoints, cwd, args.path);
           out = editFileTool(args, cwd);
           break;
         case 'glob':
@@ -409,10 +487,41 @@ export function createToolRunner({ cwd, permissions, todos, signal } = {}) {
           if (!args.url) throw new Error('url is required');
           out = await webFetchTool(args, { signal });
           break;
+        case 'git_diff': {
+          const extra = args.path ? ` -- ${JSON.stringify(args.path)}` : '';
+          const staged = args.staged ? ' --cached' : '';
+          out = await runBash({ command: `git status -sb && git diff${staged}${extra}` }, cwd, signal);
+          break;
+        }
+        case 'diagnostics':
+          out = await runDiagnostics(cwd, { signal });
+          break;
+        case 'await_shell':
+          if (!backgrounds?.snapshot) throw new Error('Background shells are not available.');
+          out = backgrounds.snapshot(args.id);
+          break;
+        case 'list_shells':
+          out = backgrounds?.list?.() || '(no background shells)';
+          break;
+        case 'kill_shell':
+          if (!backgrounds?.kill) throw new Error('Background shells are not available.');
+          out = backgrounds.kill(args.id);
+          break;
+        case 'delegate':
+          if (typeof runDelegate !== 'function') throw new Error('delegate is not available in this turn.');
+          if (!args.task) throw new Error('task is required');
+          out = await runDelegate(args);
+          break;
         default:
-          out = `Unknown tool: ${name}`;
+          if (isMcpToolName(name) && mcp?.call) {
+            out = await mcp.call(name, args);
+          } else {
+            out = `Unknown tool: ${name}`;
+          }
       }
-      return clip(out);
+      const hookPost = await runHooks('PostToolUse', { cwd, signal });
+      const extra = [hookPre, hookPost].filter(Boolean).join('\n');
+      return clip(extra ? `${out}\n${extra}` : out);
     } catch (err) {
       if (err?.interrupted || signal?.aborted) throw interruptedError(err?.message);
       return `Error: ${err?.message || String(err)}`;
@@ -426,13 +535,15 @@ export function toolSummary(call) {
   if (name === 'bash') return `bash  ${args.command || ''}`.trim();
   if (name === 'web_search') return `web_search  ${args.query || ''}`.trim();
   if (name === 'web_fetch') return `web_fetch  ${args.url || ''}`.trim();
+  if (name === 'delegate') return `delegate  ${String(args.task || '').slice(0, 80)}`.trim();
   if (args.path) return `${name}  ${args.path}`;
   if (args.pattern) return `${name}  ${args.pattern}`;
+  if (args.id) return `${name}  ${args.id}`;
   return name;
 }
 
-export function toolsPrompt() {
-  const listed = TOOL_DEFS.map((t) => `${t.function.name}: ${String(t.function.description || '').split('.')[0]}`);
+export function toolsPrompt(defs = TOOL_DEFS) {
+  const listed = (defs || []).map((t) => `${t.function.name}: ${String(t.function.description || '').split('.')[0]}`);
   return [
     'You have OpenAI function tools on this request (including web_search and web_fetch). Call them with tool_calls (function name + JSON arguments). Do not print a tutorial about the tools.',
     'Prefer tools over guessing. Use glob/list_dir/grep, then read_file in slices. Use web_search and web_fetch for live pages.',
@@ -444,8 +555,8 @@ export function toolsPrompt() {
     .join('\n');
 }
 
-export function toolsBlock() {
-  const rows = TOOL_DEFS.map((t) => {
+export function toolsBlock(extra = []) {
+  const rows = [...TOOL_DEFS, ...(extra || [])].map((t) => {
     const name = t.function.name;
     const desc = String(t.function.description || '').split('.')[0];
     return [name, desc];

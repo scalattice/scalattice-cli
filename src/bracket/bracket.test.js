@@ -155,7 +155,7 @@ test('parse function/parameters JSON dumps without dropping later calls', () => 
 });
 
 test('default settings stream and think with compatible headers', async () => {
-  const { defaultSettings, routingHeaders, patchSettings, settingsLine } = await import('./settings.js');
+  const { defaultSettings, formatModelLabel, routingHeaders, patchSettings, settingsLine } = await import('./settings.js');
   const empty = {};
   const s = defaultSettings({}, empty);
   assert.equal(s.stream, true);
@@ -165,7 +165,18 @@ test('default settings stream and think with compatible headers', async () => {
     'X-Scalattice-Vet-Replicas': '1',
     'X-Scalattice-Security': 'tier1',
   });
+  assert.equal(s.router, true);
+  assert.equal(s.agentMode, 'agent');
   assert.match(settingsLine(s), /stream on · think on · region auto · vet 1 · security tier1/);
+  assert.equal(s.modePinned, false);
+  assert.match(settingsLine(s), /model auto · mode auto/);
+  assert.equal(formatModelLabel({ pinned: false, model: 'qwen-3-coder-30b-a3b' }), 'auto');
+  assert.equal(formatModelLabel({ pinned: false, routed: 'qwen-3-8b' }), 'auto → qwen-3-8b');
+  assert.equal(formatModelLabel({ pinned: true, model: 'qwen-3-32b' }), 'qwen-3-32b');
+  const pinnedPlan = defaultSettings({ mode: 'plan' }, empty);
+  assert.equal(pinnedPlan.modePinned, true);
+  assert.equal(pinnedPlan.agentMode, 'plan');
+  assert.match(settingsLine(pinnedPlan), /mode plan/);
 
   const vet2 = defaultSettings({ vet: 2 }, empty);
   assert.equal(vet2.stream, false);
@@ -186,8 +197,15 @@ test('slash help explains one command and settings are labeled', async () => {
   const index = slashIndex();
   assert.match(index, /\/help \[command\]/);
   assert.match(index, /\/settings/);
-  assert.match(index, /\/tools/);
-  assert.match(index, /\/provider/);
+  assert.match(index, /\/mode \[auto\|ask\|plan\|agent\]/);
+  assert.doesNotMatch(index, /^\/plan /m);
+  assert.doesNotMatch(index, /^\/ask /m);
+  assert.doesNotMatch(index, /^\/agent /m);
+  assert.match(slashHelp('ask'), /\/mode/);
+  assert.match(index, /\/router/);
+  assert.match(index, /\/mcp/);
+  assert.match(slashHelp('mcp'), /scalattice mcp/);
+  assert.match(slashHelp('router', { router: true }), /Now: on/);
   assert.doesNotMatch(index, /^\/key /m);
   assert.match(slashHelp('tools'), /Ask in the chat/);
   assert.doesNotMatch(index, /\/bash/);
@@ -219,7 +237,8 @@ test('slash help explains one command and settings are labeled', async () => {
   assert.match(block, /Thinking\s+on/);
   assert.match(block, /Region\s+auto/);
   assert.match(block, /Vet\s+1/);
-  assert.match(block, /Security\s+tier1/);
+  assert.match(block, /Model\s+auto/);
+  assert.match(block, /Mode\s+auto/);
   assert.doesNotMatch(block, /stream · think · auto/);
   assert.doesNotMatch(block, /[\u2014\u2013]/);
   assert.doesNotMatch(slashHelp('vet'), /[\u2014\u2013]/);
@@ -240,6 +259,16 @@ test('tab completes slash commands and arguments', async () => {
   assert.deepEqual(
     onoff.matches.map((m) => m.trim()),
     ['/stream on', '/stream off']
+  );
+  const modes = completeSlash('/mode ');
+  assert.deepEqual(
+    modes.matches.map((m) => m.trim()).sort(),
+    ['/mode agent', '/mode ask', '/mode auto', '/mode plan']
+  );
+  const router = completeSlash('/router ');
+  assert.deepEqual(
+    router.matches.map((m) => m.trim()),
+    ['/router on', '/router off']
   );
   const models = completeSlash('/model q', { models: ['qwen-3-8b', 'qwen-3-32b'] });
   assert.ok(models.matches.some((m) => m.includes('qwen-3-8b')));
