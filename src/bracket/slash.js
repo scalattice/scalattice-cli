@@ -161,7 +161,7 @@ export const SLASH = {
       'us    United States\n' +
       'eu    Europe\n' +
       'ap    Asia-Pacific\n' +
-      'Sent as X-Scalattice-Region. No argument shows this help and the current value.',
+      'Sent as body.scalattice.region (OpenAI extra_body). No argument shows this help and the current value.',
   },
   vet: {
     usage: '/vet [1|2|3]',
@@ -170,7 +170,7 @@ export const SLASH = {
       '1  one check (required for streaming)\n' +
       '2  two checks (turns streaming off)\n' +
       '3  three checks (turns streaming off)\n' +
-      'Sent as X-Scalattice-Vet-Replicas. Higher values cost more. No argument shows help.',
+      'Sent as body.scalattice.vetReplicas. Higher values cost more. No argument shows help.',
   },
   security: {
     usage: '/security [tier1|tier2.5]',
@@ -178,7 +178,7 @@ export const SLASH = {
     detail:
       'tier1    standard routing (required for streaming)\n' +
       'tier2.5  stricter policy (turns streaming off)\n' +
-      'Sent as X-Scalattice-Security. No argument shows this help and the current value.',
+      'Sent as body.scalattice.security. No argument shows this help and the current value.',
   },
   tools: {
     usage: '/tools',

@@ -81,11 +81,11 @@ Flags:
   --mode auto|ask|plan|agent
       How tools work (default auto). --plan / --ask / --agent still pin those.
   --region auto|us|eu|ap
-      X-Scalattice-Region (default auto)
+      body.scalattice.region (default auto)
   --vet 1|2|3
-      X-Scalattice-Vet-Replicas. Values above 1 turn streaming off.
+      body.scalattice.vetReplicas. Values above 1 turn streaming off.
   --security tier1|tier2.5
-      X-Scalattice-Security. tier2.5 turns streaming off.
+      body.scalattice.security. tier2.5 turns streaming off.
 
 Env: SCALATTICE_STREAM, SCALATTICE_THINKING, SCALATTICE_REGION,
      SCALATTICE_VET_REPLICAS, SCALATTICE_SECURITY

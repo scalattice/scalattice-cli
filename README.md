@@ -63,7 +63,7 @@ print(client.models.list())
 | Prefix | Role |
 | --- | --- |
 | `slt_mgmt_…` | Account management: credits, inference-key CRUD, fleet |
-| `slt_…` | Inference only (chat/completions via `api.*`) |
+| `slt_…` | Inference only (chat, vision, images, speech via `api.*`) |
 | `slt_provider_…` | Machine agent token (`provider machines create` / `roll`; goes on the GPU host) |
 
 Create management keys on [Account](https://scalattice.cloud/account) or `account keys create` if you need a long-lived secret for MCP. The CLI itself uses your session.
@@ -125,7 +125,7 @@ scalattice bracket provider key --show    # print the full secret
 
 Inside Bracket, `/provider key`, `/provider key roll`, and `/provider key revoke` do the same. `/provider key` never prints the full secret. Default model is `qwen-3-coder-30b-a3b` (override with `--model` or `SCALATTICE_BRACKET_MODEL`).
 
-Streaming is on by default and sends `X-Scalattice-Vet-Replicas: 1` plus `X-Scalattice-Security: tier1` (required by the API). Thinking is on by default. Toggle with `--no-stream`, `--no-think`, `--region auto|us|eu|ap`, `--vet 1|2|3`, `--security tier1|tier2.5`, or the matching slash commands. Multi-vet or `tier2.5` turns streaming off.
+Streaming is on by default and puts `scalattice.vetReplicas: 1` plus `scalattice.security: "tier1"` in the JSON body (required by the API). Thinking is on by default. Toggle with `--no-stream`, `--no-think`, `--region auto|us|eu|ap`, `--vet 1|2|3`, `--security tier1|tier2.5`, or the matching slash commands. Multi-vet or `tier2.5` turns streaming off. Image generation (`/v1/images/*`) and speech (`/v1/audio/speech`) use the same `scalattice` object; Bracket chat/vision stay on `/v1/chat/completions`.
 
 Inside the prompt: `/help` lists commands; `/help stream` (or region, vet, settings, chats) explains one. `/settings` prints labeled inference options. `/chats` lists saved conversations; `/chat 2` switches; `/new` starts a blank one. `/clear` `/compact` `/model` `/yolo` `/credits` `/whoami` `/provider`. Shell and file writes ask before running unless you pass `--yolo` (also `--auto` / `--dangerously-skip-permissions`).
 
