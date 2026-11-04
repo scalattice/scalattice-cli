@@ -154,17 +154,19 @@ test('parse function/parameters JSON dumps without dropping later calls', () => 
   assert.equal(JSON.parse(calls[2].function.arguments).items[0].id, '1');
 });
 
-test('default settings stream and think with compatible headers', async () => {
-  const { defaultSettings, formatModelLabel, routingHeaders, patchSettings, settingsLine } = await import('./settings.js');
+test('default settings stream and think with body.scalattice routing', async () => {
+  const { defaultSettings, formatModelLabel, routingHeaders, routingScalattice, patchSettings, settingsLine } =
+    await import('./settings.js');
   const empty = {};
   const s = defaultSettings({}, empty);
   assert.equal(s.stream, true);
   assert.equal(s.thinking, true);
-  assert.deepEqual(routingHeaders(s), {
-    'X-Scalattice-Region': 'auto',
-    'X-Scalattice-Vet-Replicas': '1',
-    'X-Scalattice-Security': 'tier1',
+  assert.deepEqual(routingScalattice(s), {
+    region: 'auto',
+    vetReplicas: 1,
+    security: 'tier1',
   });
+  assert.deepEqual(routingHeaders(s), {});
   assert.equal(s.router, true);
   assert.equal(s.agentMode, 'agent');
   assert.match(settingsLine(s), /stream on · think on · region auto · vet 1 · security tier1/);
@@ -181,7 +183,7 @@ test('default settings stream and think with compatible headers', async () => {
   const vet2 = defaultSettings({ vet: 2 }, empty);
   assert.equal(vet2.stream, false);
   assert.equal(vet2.vet, 2);
-  assert.equal(routingHeaders(vet2)['X-Scalattice-Vet-Replicas'], '2');
+  assert.equal(routingScalattice(vet2).vetReplicas, 2);
 
   const streamWins = defaultSettings({ stream: true, vet: 2 }, empty);
   assert.equal(streamWins.stream, true);
@@ -337,8 +339,8 @@ test('listModels keeps catalog context windows', async () => {
     );
   try {
     assert.deepEqual(await listModels({ apiUrl: 'https://api.example', apiKey: 'k' }), [
-      { id: 'qwen-3-coder-30b-a3b', maxContextTokens: 32768 },
-      { id: 'skip-me', maxContextTokens: 0 },
+      { id: 'qwen-3-coder-30b-a3b', maxContextTokens: 32768, jobKind: 'chat', vision: false },
+      { id: 'skip-me', maxContextTokens: 0, jobKind: 'chat', vision: false },
     ]);
     assert.deepEqual(await listModelIds({ apiUrl: 'https://api.example', apiKey: 'k' }), [
       'qwen-3-coder-30b-a3b',
@@ -399,7 +401,7 @@ test('chatCompletion ignores SSE comment keepalives', async () => {
   }
 });
 
-test('chatCompletion streams by default and sends native headers', async () => {
+test('chatCompletion streams by default and sends body.scalattice', async () => {
   const { chatCompletion } = await import('./client.js');
   const orig = globalThis.fetch;
   let captured;
@@ -430,15 +432,67 @@ test('chatCompletion streams by default and sends native headers', async () => {
     assert.equal(body.tools[0].function.name, 'grep');
     assert.equal(body.tool_choice, 'auto');
     assert.match(body.messages.at(-1).content, /\/think$/);
-    assert.equal(captured.opts.headers['X-Scalattice-Vet-Replicas'], '1');
-    assert.equal(captured.opts.headers['X-Scalattice-Security'], 'tier1');
-    assert.equal(captured.opts.headers['X-Scalattice-Region'], 'auto');
+    assert.deepEqual(body.scalattice, { region: 'auto', vetReplicas: 1, security: 'tier1' });
+    assert.equal(captured.opts.headers['X-Scalattice-Vet-Replicas'], undefined);
+    assert.equal(captured.opts.headers['X-Scalattice-Security'], undefined);
+    assert.equal(captured.opts.headers['X-Scalattice-Region'], undefined);
     assert.equal(msg.content, 'hi');
     assert.equal(msg.reasoning_content, 'plan');
     assert.deepEqual(
       parts.map((p) => p.type),
       ['thinking', 'content']
     );
+  } finally {
+    globalThis.fetch = orig;
+  }
+});
+
+test('imageGenerations and audioSpeech send body.scalattice', async () => {
+  const { audioSpeech, imageGenerations } = await import('./client.js');
+  const orig = globalThis.fetch;
+  const captured = [];
+  globalThis.fetch = async (url, opts) => {
+    captured.push({ url, opts });
+    if (String(url).includes('/audio/speech')) {
+      return new Response(Buffer.from('ID3'), {
+        status: 200,
+        headers: {
+          'content-type': 'audio/mpeg',
+          'X-Scalattice-Characters': '21',
+          'X-Scalattice-Audio-Seconds': '1.2',
+        },
+      });
+    }
+    return new Response(JSON.stringify({ created: 1, data: [{ b64_json: 'abc' }] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+  try {
+    const img = await imageGenerations({
+      apiUrl: 'https://api.example',
+      apiKey: 'slt_x',
+      model: 'sdxl-turbo',
+      prompt: 'fog',
+      settings: { region: 'eu', vet: 1, security: 'tier1', stream: false },
+    });
+    assert.equal(img.data[0].b64_json, 'abc');
+    const speech = await audioSpeech({
+      apiUrl: 'https://api.example',
+      apiKey: 'slt_x',
+      model: 'piper-lessac',
+      input: 'Hello from Scalattice.',
+      settings: { region: 'auto', stream: false },
+    });
+    assert.equal(speech.buffer.toString('utf8'), 'ID3');
+    assert.equal(speech.characters, 21);
+    assert.equal(captured[0].url, 'https://api.example/v1/images/generations');
+    assert.equal(captured[1].url, 'https://api.example/v1/audio/speech');
+    const imageBody = JSON.parse(captured[0].opts.body);
+    const speechBody = JSON.parse(captured[1].opts.body);
+    assert.deepEqual(imageBody.scalattice, { region: 'eu', vetReplicas: 1, security: 'tier1' });
+    assert.deepEqual(speechBody.scalattice, { region: 'auto', vetReplicas: 1, security: 'tier1' });
+    assert.equal(captured[0].opts.headers['X-Scalattice-Region'], undefined);
   } finally {
     globalThis.fetch = orig;
   }

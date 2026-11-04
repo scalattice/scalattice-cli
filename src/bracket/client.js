@@ -1,4 +1,4 @@
-import { routingHeaders } from './settings.js';
+import { routingScalattice } from './settings.js';
 import { applyThinkingTag, createThinkSplitter } from './think.js';
 
 /** Config/init store OPENAI_BASE_URL including `/v1`. Accept that or a host origin. */
@@ -220,6 +220,12 @@ async function readSse(res, { onDelta, signal, maxTokens = 2048 } = {}) {
   }
 }
 
+function withScalatticeBody(body, settings, { stream } = {}) {
+  const scalattice = routingScalattice({ ...(settings || {}), ...(stream != null ? { stream } : {}) });
+  if (scalattice) body.scalattice = scalattice;
+  return body;
+}
+
 export async function chatCompletion({
   apiUrl,
   apiKey,
@@ -236,13 +242,17 @@ export async function chatCompletion({
 } = {}) {
   const useStream = settings?.stream !== undefined ? settings.stream !== false : stream !== false;
   const useThink = settings?.thinking !== undefined ? settings.thinking !== false : thinking !== false;
-  const body = {
-    model,
-    messages: openaiMessages(applyThinkingTag(messages, useThink)),
-    temperature,
-    max_tokens,
-    stream: useStream,
-  };
+  const body = withScalatticeBody(
+    {
+      model,
+      messages: openaiMessages(applyThinkingTag(messages, useThink)),
+      temperature,
+      max_tokens,
+      stream: useStream,
+    },
+    settings,
+    { stream: useStream }
+  );
   if (tools?.length) {
     body.tools = tools;
     body.tool_choice = 'auto';
@@ -256,7 +266,6 @@ export async function chatCompletion({
       Accept: useStream ? 'text/event-stream' : 'application/json',
       'Cache-Control': 'no-cache',
       'X-Accel-Buffering': 'no',
-      ...routingHeaders({ ...(settings || {}), stream: useStream }),
     },
     body: JSON.stringify(body),
     signal,
@@ -298,9 +307,143 @@ export async function chatCompletion({
   return out;
 }
 
+async function postJson({ apiUrl, apiKey, path, body, settings, signal, accept = 'application/json' }) {
+  const payload = withScalatticeBody({ ...body }, settings, { stream: false });
+  const url = inferenceUrl(apiUrl, path);
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+      Accept: accept,
+    },
+    body: JSON.stringify(payload),
+    signal,
+  });
+  if (!res.ok) {
+    const t = await res.text().catch(() => '');
+    throw new Error(describeHttpError(res.status, url, t));
+  }
+  return res;
+}
+
+/** POST /v1/images/generations — prompt → pictures (b64_json by default). */
+export async function imageGenerations({
+  apiUrl,
+  apiKey,
+  model,
+  prompt,
+  n = 1,
+  size,
+  response_format = 'b64_json',
+  settings,
+  signal,
+} = {}) {
+  const body = {
+    model,
+    prompt: String(prompt || ''),
+    n: Math.min(4, Math.max(1, Number(n) || 1)),
+    response_format,
+  };
+  if (size) body.size = String(size);
+  const res = await postJson({
+    apiUrl,
+    apiKey,
+    path: '/images/generations',
+    body,
+    settings,
+    signal,
+  });
+  return res.json();
+}
+
+/** POST /v1/images/edits — reference image(s) + prompt → pictures. */
+export async function imageEdits({
+  apiUrl,
+  apiKey,
+  model,
+  prompt,
+  image,
+  images,
+  n = 1,
+  response_format = 'b64_json',
+  settings,
+  signal,
+} = {}) {
+  const refs = Array.isArray(images) ? images : images ? [images] : [];
+  if (image) refs.unshift(image);
+  const body = {
+    model,
+    prompt: String(prompt || ''),
+    n: Math.min(4, Math.max(1, Number(n) || 1)),
+    response_format,
+    images: refs.map((v) => String(v || '').trim()).filter(Boolean).slice(0, 4),
+  };
+  if (body.images.length === 1) body.image = body.images[0];
+  if (!body.images.length) throw new Error('image_edit requires at least one input image');
+  const res = await postJson({
+    apiUrl,
+    apiKey,
+    path: '/images/edits',
+    body,
+    settings,
+    signal,
+  });
+  return res.json();
+}
+
+/**
+ * POST /v1/audio/speech — text → audio bytes.
+ * Returns { buffer, contentType, characters, audioSeconds }.
+ */
+export async function audioSpeech({
+  apiUrl,
+  apiKey,
+  model,
+  input,
+  voice,
+  response_format = 'mp3',
+  speed,
+  settings,
+  signal,
+} = {}) {
+  const body = {
+    model,
+    input: String(input || ''),
+    response_format: String(response_format || 'mp3'),
+  };
+  if (voice) body.voice = String(voice);
+  if (speed != null && Number.isFinite(Number(speed))) body.speed = Number(speed);
+  const res = await postJson({
+    apiUrl,
+    apiKey,
+    path: '/audio/speech',
+    body,
+    settings,
+    signal,
+    accept: 'audio/*',
+  });
+  const buf = Buffer.from(await res.arrayBuffer());
+  const characters = res.headers.get('X-Scalattice-Characters');
+  const audioSeconds = res.headers.get('X-Scalattice-Audio-Seconds');
+  return {
+    buffer: buf,
+    contentType: res.headers.get('content-type') || 'audio/mpeg',
+    characters: characters != null ? Number(characters) || characters : undefined,
+    audioSeconds: audioSeconds != null ? Number(audioSeconds) || audioSeconds : undefined,
+  };
+}
+
 function modelContextTokens(row) {
   const n = Number(row?.max_context_tokens ?? row?.maxContextTokens ?? row?.context_length);
   return Number.isFinite(n) && n >= 1024 ? Math.floor(n) : 0;
+}
+
+function modelJobKind(row) {
+  const raw = String(row?.job_kind || row?.jobKind || '').trim().toLowerCase();
+  if (raw) return raw;
+  if (row?.visionModel === true || row?.vision === true) return 'chat';
+  return 'chat';
 }
 
 export async function listModels({ apiUrl, apiKey } = {}) {
@@ -318,6 +461,8 @@ export async function listModels({ apiUrl, apiKey } = {}) {
     .map((m) => ({
       id: String(m.id),
       maxContextTokens: modelContextTokens(m),
+      jobKind: modelJobKind(m),
+      vision: m?.visionModel === true || m?.vision === true || Boolean(m?.mmproj),
     }));
 }
 

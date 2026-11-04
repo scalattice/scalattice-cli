@@ -22,9 +22,17 @@ export function parseModelSize(id) {
   return { total: 99, active: 99 };
 }
 
-export function modelKind(id) {
+export function modelKind(id, meta = {}) {
+  const job = String(meta.jobKind || meta.job_kind || '').trim().toLowerCase();
+  if (job === 'tts' || job === 'speech' || job === 'text_to_speech' || job === 'text-to-speech') {
+    return 'tts';
+  }
+  if (job === 'image_edit') return 'image_edit';
+  if (job === 'image' || job === 'images' || job === 'image_generation') return 'image';
+  if (meta.vision === true || meta.visionModel === true) return 'vision';
+
   const s = String(id || '').toLowerCase();
-  if (/embed|rerank|whisper|tts|\baudio\b/.test(s)) return 'other';
+  if (/embed|rerank|whisper|tts|\baudio\b|piper/.test(s)) return 'tts';
   if (/\bvl\b|vision|llava/.test(s)) return 'vision';
   if (/image|img|flux|sdxl|diffusion/.test(s)) return 'image';
   if (/\bcoder\b|code-|codellama|starcoder|deepseek-coder/.test(s)) return 'coder';
@@ -36,7 +44,7 @@ function catalogRows(catalog) {
     .map((m) => {
       const id = String(m?.id || m?.modelId || '').trim();
       if (!id) return null;
-      const kind = modelKind(id);
+      const kind = modelKind(id, m);
       const size = parseModelSize(id);
       return { id, kind, ...size, maxContextTokens: Number(m.maxContextTokens) || 0 };
     })
@@ -45,7 +53,7 @@ function catalogRows(catalog) {
 
 export function describeCatalog(catalog) {
   return catalogRows(catalog)
-    .filter((r) => r.kind !== 'other' && r.kind !== 'image')
+    .filter((r) => r.kind !== 'other' && r.kind !== 'image' && r.kind !== 'image_edit' && r.kind !== 'tts')
     .map((r) => {
       const role = r.kind === 'coder' ? 'create' : r.kind === 'vision' ? 'images' : 'talk';
       const size = r.total === 99 ? '?' : `${r.total}b`;

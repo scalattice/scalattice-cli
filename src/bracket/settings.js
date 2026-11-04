@@ -114,15 +114,24 @@ export function patchSettings(current, patch) {
   return next;
 }
 
-export function routingHeaders(settings) {
+/**
+ * Per-request routing for Scalattice (`body.scalattice` / OpenAI `extra_body`).
+ * Non-Scalattice providers get null (no field). Streaming forces vet 1 + tier1.
+ */
+export function routingScalattice(settings) {
   const s = settings || {};
-  if (s.providerId && s.providerId !== 'scalattice') return {};
+  if (s.providerId && s.providerId !== 'scalattice') return null;
   const stream = s.stream !== false;
   return {
-    'X-Scalattice-Region': regionOf(s.region, 'auto'),
-    'X-Scalattice-Vet-Replicas': String(stream ? 1 : vetOf(s.vet, 1)),
-    'X-Scalattice-Security': stream ? 'tier1' : securityOf(s.security, 'tier1'),
+    region: regionOf(s.region, 'auto'),
+    vetReplicas: stream ? 1 : vetOf(s.vet, 1),
+    security: stream ? 'tier1' : securityOf(s.security, 'tier1'),
   };
+}
+
+/** @deprecated Routing belongs in body.scalattice; kept so callers do not send legacy headers. */
+export function routingHeaders(_settings) {
+  return {};
 }
 
 export function settingsLine(settings) {
