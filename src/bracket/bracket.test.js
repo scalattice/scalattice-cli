@@ -480,7 +480,7 @@ test('imageGenerations and audioSpeech send body.scalattice', async () => {
     const speech = await audioSpeech({
       apiUrl: 'https://api.example',
       apiKey: 'slt_x',
-      model: 'piper-lessac',
+      model: 'qwen3-tts',
       input: 'Hello from Scalattice.',
       settings: { region: 'auto', stream: false },
     });
